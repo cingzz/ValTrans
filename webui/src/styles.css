@@ -1,0 +1,205 @@
+:root {
+  /* ★ v0.2.21：本文件的令牌定义已删除，统一由 tokens.css 提供。
+     原来这里是**第三套**（天蓝 #45BEE8）。三套令牌并存时
+     「改了 --primary 没反应」是必然结果。 */
+:root {
+  /* 同类产品视觉令牌（浅色消费级 App 风） */
+  --ok: #22B573;
+  --warn: #E8930C;
+  --danger: #FF4655;
+}
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+button { font-family: inherit; cursor: pointer; }
+
+/* ---------- 布局 ---------- */
+.shell { display: flex; height: 100%; }
+
+.side {
+  width: 216px;
+  background: var(--card);
+  border-right: 1px solid var(--stroke);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 12px;
+  flex-shrink: 0;
+}
+
+.logo { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; }
+.logo .mark {
+  width: 34px; height: 34px; border-radius: 10px;
+  /* v0.2.21：原来写死天蓝 #45BEE8->#7BD0F0（v0.2.10 的旧主色）。
+     令牌换成蓝色后这仍是**第二个品牌色**，与界面不是一套。
+     改为从 --primary 派生（报告 §2.7 渐变组 1：primary -> primary 混 62% 白）。
+     顺带说明：这条规则当前无人使用（TitleBar 走的是 shell.css 的 .logo），
+     但留着就是留雷 —— 下一个用的人会直接继承一个错色。 */
+  background: linear-gradient(135deg, var(--primary),
+              color-mix(in srgb, var(--primary) 62%, #ffffff));
+  color: #fff; font-weight: 800; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+}
+.logo b { font-size: 16px; letter-spacing: .5px; }
+
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: none; border-radius: 12px;
+  background: transparent; color: var(--muted); font-size: 14px; text-align: left;
+  transition: background .12s, color .12s;
+}
+.nav-item:hover { background: #F3F6F8; color: var(--text); }
+.nav-item.on { background: var(--primary-soft); color: var(--primary-text); font-weight: 600; }
+.nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+.side-foot { margin-top: auto; border-top: 1px solid var(--stroke); padding: 12px 10px 2px; }
+.side-foot .bal { color: var(--muted); font-size: 12px; }
+.side-foot .bal b { color: var(--text); font-size: 18px; }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.content { flex: 1; overflow-y: auto; padding: 22px 26px; }
+.content::-webkit-scrollbar { width: 8px; }
+.content::-webkit-scrollbar-thumb { background: #DDD8D0; border-radius: 4px; }
+
+/* ---------- 通用组件 ---------- */
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+}
+.h1 { font-size: 21px; font-weight: 700; }
+.h2 { font-size: 15px; font-weight: 600; }
+.muted { color: var(--muted); font-size: 12.5px; }
+
+.btn {
+  border: 1px solid var(--stroke); background: var(--card); color: var(--text);
+  border-radius: var(--radius-s); padding: 9px 18px; font-size: 13.5px;
+  transition: background .12s, border-color .12s;
+}
+.btn:hover { background: #F6F8FA; border-color: #D8D4CC; }
+.btn.primary {
+  background: var(--primary); border: none; color: #06303F; font-weight: 700;
+}
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.primary:disabled { background: #C9CED4; color: #fff; cursor: not-allowed; }
+.btn.big { width: 100%; padding: 14px; font-size: 16px; border-radius: 12px; }
+.btn.ghost { background: transparent; }
+.btn.danger { border-color: #FFD2D6; color: var(--danger); }
+
+.pill {
+  display: inline-block; padding: 4px 12px; border-radius: 999px;
+  background: var(--primary-soft); color: var(--primary-text); font-size: 12.5px;
+}
+.pill.gray { background: #F0EEEA; color: var(--muted); }
+.pill.green { background: #E2F7EC; color: var(--ok); }
+
+.row { display: flex; align-items: center; gap: 12px; }
+.grow { flex: 1; min-width: 0; }
+
+input[type="text"], input[type="password"], select {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--stroke);
+  border-radius: var(--radius-s); background: #FBFAF8; color: var(--text);
+  font-size: 13.5px; font-family: inherit; outline: none;
+}
+input:focus, select:focus { border-color: var(--primary); background: #fff; }
+
+/* 开关 */
+.toggle {
+  position: relative; width: 42px; height: 24px; border-radius: 999px;
+  background: #D6D3CC; border: none; transition: background .15s; flex-shrink: 0;
+}
+.toggle::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: left .15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.toggle.on { background: var(--primary); }
+.toggle.on::after { left: 21px; }
+
+/* 滑杆 */
+input[type="range"] {
+  -webkit-appearance: none; width: 100%; height: 4px; border-radius: 2px;
+  background: #E6E2DB; outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--primary); cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+}
+
+/* 通知横幅 */
+.notice {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--primary-soft); color: var(--primary-text);
+  border-radius: 12px; padding: 10px 16px; font-size: 13px; margin-bottom: 16px;
+}
+.notice button { border: none; background: transparent; color: inherit; font-size: 15px; }
+
+/* 字幕流水 */
+.sub-item { border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+.sub-item:nth-child(odd) { background: #FBFAF7; border: 1px solid var(--stroke); }
+.sub-item .orig { color: var(--muted); font-size: 12.5px; }
+.sub-item .trans { font-size: 15.5px; font-weight: 600; margin: 2px 0; }
+.sub-item .meta { color: var(--muted); font-size: 11.5px; }
+
+/* 进度条 */
+.prog { height: 8px; background: #EFECE6; border-radius: 4px; overflow: hidden; }
+.prog > div { height: 100%; background: var(--primary); border-radius: 4px; transition: width .2s; }
+
+/* 空状态 */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); gap: 8px; padding: 60px 0; text-align: center;
+}
+.empty .big-ico { font-size: 40px; opacity: .5; }
+
+/* 向导 */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(22, 24, 28, .45);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  width: 620px; max-width: 92vw; max-height: 88vh; overflow-y: auto; padding: 26px 28px;
+}
+.step-dots { display: flex; gap: 6px; }
+.step-dots i { width: 8px; height: 8px; border-radius: 50%; background: #E4E0D9; }
+.step-dots i.on { background: var(--primary); }
+
+/* 设置网格 */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 980px) { .grid2 { grid-template-columns: 1fr; } }
+.form-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.form-row > label:first-child { width: 96px; flex-shrink: 0; color: var(--muted); font-size: 13px; }
+
+/* 热键录制按钮（HotkeyInput） */
+button.recording {
+  border-color: var(--primary) !important;
+  background: var(--primary-soft) !important;
+  color: var(--primary-text) !important;
+  font-weight: 700;
+  animation: recPulse 1.2s ease-in-out infinite;
+}
+@keyframes recPulse { 0%,100% { opacity: 1 } 50% { opacity: .62 } }
+/* 数值输入框（浮窗宽度等可精确输入的参数） */
+input.w-num {
+  width: 92px; flex-shrink: 0; text-align: center;
+  padding: 7px 8px; font-variant-numeric: tabular-nums;
+}
+input.w-num::-webkit-outer-spin-button,
+input.w-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input.w-num { -moz-appearance: textfield; }

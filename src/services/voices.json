@@ -1,0 +1,151 @@
+{
+ "voices": {
+  "en": [
+   {
+    "id": "en-US-BrianNeural",
+    "label": "沉稳男声",
+    "desc": "语速慢、音调低。念长句报点最清楚。",
+    "gender": "male",
+    "locale": "en-US",
+    "multilingual": false,
+    "prosody": {
+     "rate": -12,
+     "pitch": -12
+    }
+   },
+   {
+    "id": "en-US-EmmaNeural",
+    "label": "清晰女声",
+    "desc": "咬字清楚、语速适中。信息量大时最稳。",
+    "gender": "female",
+    "locale": "en-US",
+    "multilingual": false,
+    "prosody": {
+     "rate": 0,
+     "pitch": 6
+    }
+   }
+  ],
+  "zh": [
+   {
+    "id": "cosy:alex",
+    "label": "超自然男声 · 云端",
+    "desc": "CosyVoice2 合成，最像真人说话（默认；用硅基 Key，失败自动回落本包音色）。",
+    "gender": "male",
+    "locale": "zh-CN",
+    "multilingual": true,
+    "provider": "cosyvoice",
+    "cv": "alex",
+    "prosody": {
+     "rate": 0,
+     "pitch": 0
+    }
+   },
+   {
+    "id": "cosy:bella",
+    "label": "超自然女声 · 云端",
+    "desc": "CosyVoice2 女声，自然流畅（需硅基 Key）。",
+    "gender": "female",
+    "locale": "zh-CN",
+    "multilingual": true,
+    "provider": "cosyvoice",
+    "cv": "bella",
+    "prosody": {
+     "rate": 0,
+     "pitch": 0
+    }
+   },
+   {
+    "id": "cosy:charles",
+    "label": "沉稳男声 · 云端",
+    "desc": "CosyVoice2 沉稳男声，报点清楚（需硅基 Key）。",
+    "gender": "male",
+    "locale": "zh-CN",
+    "multilingual": true,
+    "provider": "cosyvoice",
+    "cv": "charles",
+    "prosody": {
+     "rate": 0,
+     "pitch": 0
+    }
+   },
+   {
+    "id": "zh-CN-YunxiNeural",
+    "label": "阳光男声 · 自然",
+    "desc": "本地 edge 合成，日常口吻（云端不可用时兜底首选）。",
+    "gender": "male",
+    "locale": "zh-CN",
+    "multilingual": false,
+    "prosody": {
+     "rate": 6,
+     "pitch": 2
+    }
+   },
+   {
+    "id": "zh-CN-YunjianNeural",
+    "label": "解说男声 · 激情",
+    "desc": "体育解说风。喊团战有气势。",
+    "gender": "male",
+    "locale": "zh-CN",
+    "multilingual": false,
+    "prosody": {
+     "rate": 10,
+     "pitch": 0
+    }
+   },
+   {
+    "id": "zh-CN-XiaoyiNeural",
+    "label": "灵动女声",
+    "desc": "轻快自然，少女感不夸张。",
+    "gender": "female",
+    "locale": "zh-CN",
+    "multilingual": false,
+    "prosody": {
+     "rate": 4,
+     "pitch": 6
+    }
+   },
+   {
+    "id": "zh-CN-XiaoxiaoNeural",
+    "label": "清亮女声",
+    "desc": "明亮清晰，经典款。",
+    "gender": "female",
+    "locale": "zh-CN",
+    "multilingual": false,
+    "prosody": {
+     "rate": 0,
+     "pitch": 4
+    }
+   }
+  ],
+  "ja": [
+   {
+    "id": "ja-JP-NanamiNeural",
+    "label": "日文女声",
+    "desc": "日文兜底。",
+    "gender": "female",
+    "locale": "ja-JP",
+    "multilingual": false,
+    "prosody": {
+     "rate": -4,
+     "pitch": 0
+    }
+   }
+  ],
+  "ko": [
+   {
+    "id": "ko-KR-SunHiNeural",
+    "label": "韩文女声",
+    "desc": "韩文兜底。",
+    "gender": "female",
+    "locale": "ko-KR",
+    "multilingual": false,
+    "prosody": {
+     "rate": -4,
+     "pitch": 0
+    }
+   }
+  ]
+ },
+ "personas": []
+}

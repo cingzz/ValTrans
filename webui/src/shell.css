@@ -1,0 +1,505 @@
+/* ============================================================================
+   ValTrans 界面层 —— 六层视觉模型（v0.2.21 重做）
+
+   依据：NexBox界面设计报告-如何设计这个UI.md §2 六层视觉模型
+     L0 背景   明亮壁纸 + 竖向渐变压暗 veil（渐变，不能纯色）
+     L1 令牌   -> tokens.css
+     L2 玻璃面 半透明底 + 模糊 + 1px 描边 + 内高光
+     L3 描边光 只画 1px 渐变环，制造边缘反光（mask content-box XOR）
+     L4 光标辉光 白色高光跟着鼠标走
+     L5 动效   唯一缓动 + 三档时长 + 1~2px 反馈幅度
+
+   ★ 关于 L0：本项目的**字幕浮窗**是原生 WinForms 分层窗，做不了
+     backdrop-filter（实测：WebView2 逐像素透明在
+     WinForms 宿主不可用）。玻璃只作用于**主窗口**。
+     浮窗借用同一套令牌与排版，材质保持半透明色块。
+   ============================================================================ */
+
+html, body {
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-family: var(--font);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* ── L0 背景层 ────────────────────────────────────────────────────────────
+   报告 §1 的第一公理（本项目实测踩过，记在这里）：
+     「玻璃好不好看，取决于它背后有没有『明亮、有内容』的东西。
+       玻璃的本质是"让你看见背后"。背后是纯色 -> 一块脏灰板（死玻璃）。」
+
+   ★ 我第一版只用**平滑渐变**做背景，玻璃**完全看不见**。
+     量化对照（tests/_out/bg_*.png 可复现）：
+       平滑渐变   纹理分 2.66  -> backdrop-filter 模糊它等于什么都没做
+       有内容     纹理分 13.55 -> 模糊后仍有可感知层次，玻璃才成立
+     差 5 倍。所以「先做背景，再做玻璃」不是修辞，是**硬前提**。
+
+   这里的做法（报告 §12 第 1 步「选一张明亮有层次的图」）：
+     · bg__img   —— 用**纯 CSS 生成的「图」**：网格 + 斜向条纹 + 三块色域
+                    （不引外部图片文件：打包要带、离线要可用、体积要小）
+     · bg__veil  —— 竖向渐变压暗，顶部浅底部深
+   -------------------------------------------------------------------- */
+.bg {
+  position: fixed; inset: 0; z-index: 0;
+  /* 底：报告 §2.8「晨光 morning」原配方（同族蓝色主色）
+     linear 180deg  #bfe3ff 0%, #fdf3df 62%, #a9d9c8 100%              */
+  background: linear-gradient(180deg, #bfe3ff 0%, #fdf3df 62%, #a9d9c8 100%);
+}
+
+/* 「壁纸」本体：色域 + 细网格 + 斜向条纹 —— 玻璃背后必须有**内容**。
+   报告 §1 第一公理：「玻璃好不好看，取决于它背后有没有『明亮、有内容』的
+   东西。玻璃的本质是"让你看见背后"。」
+   · 色域   -> 大尺度层次（低频）
+   · 网格   -> 小尺度纹理（模糊后留下"磨砂"感）
+   · 斜条纹 -> 方向感（纯网格模糊后糊成一片，没有方向）
+   · 放大 4% -> backdrop-filter 采样到边缘不会露出底色（报告 §3.5）      */
+.bg__img {
+  position: absolute; inset: -4%;
+  transform: scale(1.04);
+  background-image:
+    radial-gradient(820px 560px at 10% -6%,  rgba(96,165,250,.30),  transparent 62%),
+    radial-gradient(680px 480px at 30% 46%,  rgba(167,139,250,.22), transparent 60%),
+    radial-gradient(760px 520px at 94% 10%,  rgba(250,204,21,.24),  transparent 64%),
+    radial-gradient(700px 500px at 76% 96%,  rgba(16,185,129,.20),  transparent 62%),
+    linear-gradient(to right,  rgba(30,50,80,.085) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(30,50,80,.085) 1px, transparent 1px),
+    repeating-linear-gradient(58deg,
+      rgba(255,255,255,.42) 0 2px, transparent 2px 10px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%,
+                   46px 46px, 46px 46px, 100% 100%;
+}
+
+/* veil：报告 §2.6 亮色原配方 —— 白色竖向渐变（.10 -> .34）。
+   ★ 之前写成深色（#1b2436）—— 亮色界面**必须**用白色 veil，
+     深色 veil 会压暗背景，玻璃的"明亮"前提就没了。                  */
+.bg__veil {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,.10) 0%, rgba(255,255,255,.34) 100%);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   L2/L3 材质：玻璃五件套（报告 §3）
+   -----------------------------------------------------------------------
+   任何一个玻璃面都必须同时有这 5 样，少一样就"塑料"：
+       ① 半透明底  ② backdrop-filter  ③ 1px 描边  ④ 1px 内高光  ⑤ 投影
+
+   ★ v0.2.21 实测修正（用户「玻璃在哪」的实测答案）
+   ------------------------------------------------
+   我原先只在 `.glass--card` 这类**我自己新起的类名**上写了 backdrop-filter，
+   而页面里真正在用的是旧文件 design.css 的 `.card` ——
+       .card { background: var(--card); border: …; box-shadow: …; }
+   `--card` 被我映射到 `--glass-card`（42% 半透明白），**但没有模糊**。
+   没有模糊的半透明 = 一块平板，不是玻璃。
+
+   A/B 实测（tests/.. glass_ab_diff.png 可复现）：
+       关掉 backdrop-filter 后全图仅 **0.7%** 像素变化
+       差异图：rail/pnav 有斜纹（生效），**卡片整片全黑**（完全没生效）
+   与用户看到的「玻璃质感在哪」完全一致 —— 是实现缺项，不是用户没看出来。
+
+   所以这一段的关键不是"把模糊调强"，而是**把材质补全到真实在用的类上**。
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── 档位定义（报告 §3.1 记忆法：越大越透，越小越实）──────────────────
+   顶栏 .96 / 大面板 .26 / 卡片 .42 / 按钮·下拉 .62
+   blur 与 saturate 也按报告逐档抄，不自行发挥。                     */
+.glass {
+  position: relative;
+  background: var(--glass-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-stage);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--glass-hi);
+}
+.glass--stage { background: var(--glass-stage);
+                backdrop-filter: var(--glass-blur-lg);
+                -webkit-backdrop-filter: var(--glass-blur-lg);
+                border: 1px solid var(--glass-line-stage);
+                box-shadow: var(--sh-3), inset 0 1px 0 var(--glass-hi-stage); }
+.glass--card  { background: var(--glass-card); }
+.glass--ctrl  { background: var(--glass-ctrl);
+                border: 1px solid var(--glass-line);
+                box-shadow: var(--sh-1), inset 0 1px 0 var(--glass-hi); }
+
+/* L3 描边光（报告 §3.3「质感的灵魂」）：只画 1px 的环，不画面。
+   `padding:1px` + 两块 mask 相减（xor）= 只剩一圈 1px 的斜向反光。 */
+.glass::before,
+.card::before,
+.stage::before,
+.rail::before {
+  content: ""; position: absolute; inset: -1px;
+  padding: 1px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(160deg,
+    rgba(255,255,255,.95), rgba(255,255,255,.25) 42%,
+    rgba(255,255,255,0) 78%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box,
+                linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ═══ 把材质补到**真实在用**的类上 ═══════════════════════════════════
+   这一段是本次白->玻璃可见的真正修复点。
+   注意 design.css / styles.css 在 shell.css **之后**加载，但它们只设
+   background/border/radius/padding，**不碰 backdrop-filter**，
+   所以两条规则不打架，各管各的属性。                          */
+
+/* 卡片 .42 + blur 30 + 描边 .70 + 内高光 .85 + --sh-2 —— 报告 §3.1 原配方 */
+.card, .glass--card {
+  position: relative;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--glass-hi);
+}
+
+/* 大面板 / 台：更透 + 更强模糊 + --sh-3 */
+.stage {
+  position: relative;
+  background: var(--glass-stage);
+  backdrop-filter: var(--glass-blur-lg);
+  -webkit-backdrop-filter: var(--glass-blur-lg);
+  border: 1px solid var(--glass-line-stage);
+  box-shadow: var(--sh-3), inset 0 1px 0 var(--glass-hi-stage);
+}
+
+/* 按钮 / 输入 / 下拉：.62 —— 最实的一档，文字要能压住背景 */
+.btn, .inp, .sel, .seg, .chip, .badge {
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--glass-hi);
+}
+/* 主按钮是实心主色，不该再模糊（底是不透明的，模糊它没有意义） */
+.btn.primary { backdrop-filter: none; -webkit-backdrop-filter: none;
+               box-shadow: var(--sh-brand), inset 0 1px 0 rgba(255,255,255,.34); }
+
+/* ── L4 光标辉光 ───────────────────────────────────────────────────────
+   载体就是 .main 本身（不再额外插一层 .cx-layer）：
+   · `.main .card::after` 用 var(--mx)/var(--my) 定位光斑
+   · App.jsx 在 .main 上挂 onMouseMove 写入这两个变量
+   · 不逐元素监听、也不 setState —— 浏览器自己合成，零 React 重渲染
+   ★ 之前插过一个 .cx-layer 并带 pointer-events:none，
+     那样它**收不到鼠标事件**，辉光永远停在初始的 50% 0%。          */
+.main .card { position: relative; }
+.main .card::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; opacity: 0; transition: opacity var(--t-mid);
+  background: radial-gradient(440px circle at var(--mx) var(--my),
+              rgba(255,255,255,.5), transparent 62%);
+}
+.main .card:hover::after { opacity: 1; }
+
+/* rail 底部状态：圆点 + 状态文字（v0.2.21 由「只有圆点」补上文字，
+   因为删掉 pnav 后底部那块 chip 也一起没了，状态只剩一个点认不出） */
+.rail-state { margin-top: auto; display: grid; place-items: center;
+              gap: 3px; padding: var(--s2) 0; text-align: center; }
+.rail-state i { width: 7px; height: 7px; border-radius: 50%; display: block;
+                box-shadow: 0 0 0 2px rgba(255,255,255,.9); }
+
+/* 顶栏副标题（中文说明，别太抢） */
+.tb-sub { font-size: var(--f-note); color: var(--fg-3); }
+.titlebar .win-btns button.on { background: var(--primary-soft);
+                               color: color-mix(in srgb, var(--primary) 70%, var(--fg)); }
+
+/* ── 版面骨架（报告 §3）─────────────────────────────────────────────────
+   z-index 只有 5 档（报告 §3.2），别乱加：
+     3000 toast / 999 顶栏 / 998 rail / 1 main / 0 背景
+
+   ★ v0.2.21 修正（实测白屏/左侧一条竖白边的根因）：
+     我做「令牌唯一来源」时把 design_fix.css 里的 `.app-frame` 规则
+     一起删掉了，而 shell.css 里**从来没写过它** —— 于是：
+       .app-frame 无样式 -> 不是 flex 容器 -> .content 的 flex:1 失效
+       -> 内容满宽，正好压在 fixed 的 rail / pnav 底下
+     截图表现 = 满屏底色 + 左边一条竖白边（被盖住的 rail 边缘）。
+
+     教训：**回收旧文件的所有权 ≠ 可以不写。** 旧文件里定义过的、
+     整个壳层依赖的布局规则，必须在新文件里补齐后再删，否则等于删功能。
+     本节就是补齐清单：app-frame（纵向 flex 容器）+ main（让位侧栏）
+     + content（滚动区）。
+   -------------------------------------------------------------------- */
+.app-frame {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column;
+  height: 100vh; overflow: hidden;      /* 滚动交给 .content，别让整窗滚 */
+}
+
+/* main 让位给 fixed 的 rail
+   ★ v0.2.21：本文件原先有**两处** .main 规则（这里 + 下面「主内容」那段），
+     后者覆盖前者的 margin-left —— 同一个判断两份实现，改一处必漏另一处
+     （同一条通则）。现在合并成下面那一处唯一的 .main。 */
+.main {
+  --mx: 50%; --my: 0%;
+}
+/* .content 是**唯一的滚动区**（报告 §3.5）：
+   顶栏/rail/pnav 全部 fixed，只滚内容 —— 滚动时导航不动。 */
+.content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.content > .page { padding: var(--s2) var(--s3) var(--s3); }
+
+/* 顶栏必须是一条**连续**的玻璃带（报告 §3.3，最容易翻车的一点）。
+   理由：透明的东西画在上面什么都挡不住 —— 搜索框自身有玻璃，
+   但左右那条横带是空的，一旦没底色，主内容滚动时会从顶栏穿过去。   */
+.titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--titlebar-h);
+  z-index: 999; -webkit-app-region: drag;
+  display: flex; align-items: center; gap: var(--s3);
+  padding: 0 var(--s4) 0 var(--s5);
+  background: var(--glass-veil);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: 0 1px 0 var(--line),
+              0 14px 34px -26px rgba(30,40,60,.55);
+}
+.titlebar .logo {
+  width: 30px; height: 30px; border-radius: var(--r-sm);
+  display: grid; place-items: center; color: #fff; font-weight: 800;
+  font-size: 13px; flex: none;
+  background: linear-gradient(135deg, var(--primary),
+              color-mix(in srgb, var(--primary) 62%, #ffffff));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.55);
+}
+.titlebar .name { font-size: var(--f-name); font-weight: 680; letter-spacing: .01em; }
+.titlebar .ver {
+  font-size: var(--f-sec); padding: 2px var(--s2); border-radius: var(--r-pill);
+  border: 1px solid var(--line); color: var(--fg-3);
+}
+.titlebar .win-btns { display: flex; gap: 4px; margin-left: auto; }
+.titlebar .win-btns button {
+  width: 40px; height: 32px; border: 0; border-radius: var(--r-xs);
+  background: transparent; color: var(--fg-2); cursor: pointer;
+  display: grid; place-items: center;
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+.titlebar .win-btns button:hover { background: var(--glass-ctrl); color: var(--fg); }
+.titlebar .win-btns button:active { transform: scale(.95); }
+.titlebar .win-btns button.close:hover { background: var(--danger); color: #fff; }
+
+/* 一级图标栏 rail：离边 12px 悬浮（报告 §3.4 —— 直接决定高级感）*/
+.rail {
+  position: fixed; z-index: 998;
+  top: calc(var(--titlebar-h) + var(--s2));
+  bottom: var(--gap-float); left: var(--gap-float);
+  width: var(--rail-w);
+  display: flex; flex-direction: column; gap: 3px; padding: var(--s2) 0;
+  background: var(--glass-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-radius: var(--r-stage);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--glass-hi);
+}
+.rail-item {
+  width: 58px; height: 54px; margin: 0 auto;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--s1);
+  border: 0; border-radius: var(--r-lg); background: transparent;
+  color: var(--fg-2); cursor: pointer; font-size: 10px;
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+.rail-item:hover { background: rgba(255,255,255,.55);
+                   box-shadow: inset 0 0 0 1px var(--glass-line); }
+.rail-item:active { transform: scale(.95); }
+/* 激活态是**实心主色块**，不是下划线或变色文字 —— 玻璃界面里下划线看不见 */
+.rail-item.on { background: var(--primary); color: var(--primary-fg);
+                box-shadow: 0 6px 18px -6px var(--primary-strong); }
+
+/* ★ v0.2.21：二级文字栏 pnav 已整体删除。
+   原因：它和 rail 渲染的是**同一份 NAV**（同一组图标 + 同一个 onClick），
+   两栏并排 = 同一个功能出现两次，正是用户说的「左侧功能重复了」。
+   现在导航只有 rail 一条，图标下面直接带文字标签（.rail-label），
+   既去重又不丢可读性 —— 不靠 tooltip 才知道哪个是哪个。 */
+
+/* rail 里的文字标签：图标正下方，激活态随反白 */
+.rail-label {
+  font-size: var(--f-tag); font-weight: 600; line-height: 1.1;
+  letter-spacing: -.01em; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rail-item.on .rail-label { font-weight: 700; }
+
+/* rail 底部状态：圆点 + 状态文字（替代原来 pnav 底部的 chip） */
+.rail-state-text {
+  font-size: var(--f-sec); color: var(--fg-3); font-weight: 600;
+  max-width: 62px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 主内容区：**唯一**一份 .main（把上面那段合并过来了）
+   让开 rail（--main-x）+ 顶栏高度，保证首屏不贴顶栏 */
+.main {
+  --mx: 50%; --my: 0%;
+  position: relative; z-index: 1;
+  flex: 1; min-height: 0;
+  margin-left: var(--main-x);
+  padding: var(--main-pad);
+  padding-top: calc(var(--titlebar-h) + 10px);
+}
+
+/* 玻璃台：只提供**一个**背景，内部全靠 1px 线切分（报告 §7.5）*/
+.stage {
+  border-radius: var(--r-stage);
+  padding: 2px 26px 14px;
+  margin-bottom: 26px;
+  background: var(--glass-stage);
+  backdrop-filter: var(--glass-blur-lg);
+  -webkit-backdrop-filter: var(--glass-blur-lg);
+  border: 1px solid rgba(255,255,255,.55);
+  box-shadow: var(--sh-3), inset 0 1px 0 rgba(255,255,255,.80);
+}
+
+/* 分组规则：区块之间用**发丝线**，不用盒子（报告 §7.5 最核心一条）*/
+.row2 { padding: 13px 0; box-shadow: inset 0 -1px 0 var(--line); }
+.row2:last-child { box-shadow: none; }
+/* 开放式多列：竖发丝线分隔，不套盒子 */
+.stats.open .stat + .stat { box-shadow: inset 1px 0 0 var(--line); }
+
+.stat { padding: var(--s3) var(--s2); }
+.stat__n {
+  font-size: var(--f-stat); font-weight: 720; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;   /* 统计数字每帧抖动 = 廉价 */
+}
+.stat__t { font-size: var(--f-note); color: var(--fg-3); max-width: 46ch; }
+
+.sec__t {
+  font-size: var(--f-sec); font-weight: 800; letter-spacing: .14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--primary) 70%, var(--fg));
+}
+.group__t {
+  font-size: var(--f-tag); font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--fg-3);
+}
+.note { font-size: var(--f-note); color: var(--fg-3); max-width: 46ch; }
+h1.h1 { font-size: var(--f-h1); font-weight: 700; letter-spacing: -.02em;
+        margin: 0 0 var(--s3); }
+
+/* ── 组件（报告 §7）──────────────────────────────────────────────────── */
+.btn {
+  height: 36px; border: 0; border-radius: var(--r-sm);
+  padding: 0 16px; font-size: var(--f-btn); font-weight: 600;
+  background: var(--glass-ctrl); color: var(--fg); cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--s2);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--glass-hi);
+  transition: transform var(--t-fast), border-color var(--t-fast),
+              background var(--t-fast);
+}
+.btn:hover { transform: translateY(-1px); border-color: var(--primary-border); }
+.btn:active { transform: scale(.97); }
+.btn.primary {
+  background: var(--primary); color: var(--primary-fg); font-weight: 650;
+  border-color: transparent;
+  box-shadow: 0 8px 20px -8px var(--primary-strong),
+              inset 0 1px 0 rgba(255,255,255,.35);
+}
+.btn.ghost { background: transparent; border-color: var(--line);
+             box-shadow: none; }
+.btn.ghost:hover { background: var(--primary-soft); border-color: var(--primary-border); }
+.btn.icon { width: 36px; padding: 0; justify-content: center; }
+
+/* 开关：轨 42x24、滑块 18x18、开 -> 主色（报告 §7.6）*/
+.switch { width: 42px; height: 24px; border-radius: var(--r-pill);
+          border: 0; padding: 0; position: relative; cursor: pointer;
+          background: color-mix(in srgb, #14161b 16%, transparent);
+          transition: background var(--t-fast); }
+.switch i {
+  position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(30,40,60,.28);
+  transition: transform var(--t-fast);
+}
+.switch.on { background: var(--primary); }
+.switch.on i { transform: translateX(18px); }
+
+/* 分段控件 */
+.seg { display: inline-flex; padding: 3px; border-radius: var(--r-sm);
+       background: rgba(255,255,255,.5); gap: 2px; }
+.seg button {
+  border: 0; border-radius: 7px; padding: 6px 13px; background: transparent;
+  font-size: var(--f-note); font-weight: 600; color: var(--fg-2);
+  cursor: pointer; transition: background var(--t-fast), color var(--t-fast);
+}
+.seg button.on { background: var(--primary); color: var(--primary-fg);
+                 box-shadow: 0 3px 10px -4px var(--primary-strong); }
+
+/* 下拉/输入：自绘，系统件一律接管（报告 §7.6 / §11 规则 10）*/
+.inp, .sel {
+  height: 32px; border-radius: 9px; padding: 0 var(--s3);
+  background: var(--glass-ctrl); color: var(--fg);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--glass-hi);
+  font-size: var(--f-btn); font-weight: 600;
+}
+.sel { appearance: none; padding-right: 30px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-2) 50%),
+                    linear-gradient(135deg, var(--fg-2) 50%, transparent 50%);
+  background-position: right 14px center, right 9px center;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+.inp:focus-visible, .sel:focus-visible, .btn:focus-visible,
+.rail-item:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 2px;
+}
+
+/* 滑杆 */
+.rng { -webkit-appearance: none; appearance: none; width: 200px; height: 5px;
+       border-radius: var(--r-pill); background: color-mix(in srgb, #14161b 14%, transparent);
+       outline: none; }
+.rng::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 55%, transparent);
+  cursor: pointer;
+}
+
+/* 徽章 / chip / kbd */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--f-note); font-weight: 700; padding: 4px 10px;
+  border-radius: var(--r-pill); background: var(--primary-soft);
+  color: color-mix(in srgb, var(--primary) 70%, var(--fg));
+}
+.badge.ok   { background: var(--ok-bg);     color: var(--ok); }
+.badge.warn { background: var(--warn-bg);   color: var(--warn); }
+.badge.err  { background: var(--danger-bg); color: var(--danger); }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--f-note); font-weight: 600; padding: 4px 10px;
+  border-radius: var(--r-pill); background: rgba(255,255,255,.62);
+  border: 1px solid var(--glass-line);
+}
+kbd {
+  font-family: var(--font); font-size: var(--f-note); font-weight: 600;
+  padding: 1px 6px; border-radius: 5px; background: rgba(255,255,255,.7);
+  border: 1px solid var(--line); border-bottom-width: 2px; color: var(--fg-2);
+}
+
+/* 列表行（报告 §7.7）：grid 36px 1fr auto auto，发丝线分隔 */
+.row {
+  display: grid; grid-template-columns: 36px 1fr auto auto;
+  gap: var(--s4); padding: 13px 20px; align-items: center;
+  box-shadow: inset 0 -1px 0 var(--line);
+  transition: background var(--t-fast);
+}
+.row:hover { background: rgba(255,255,255,.42); }
+
+/* 滚动条：透明轨道 + 主色细条（报告 §7.8）*/
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 3px; }
+
+/* ── L5 动效 ───────────────────────────────────────────────────────────
+   报告 §8.3 果冻弹跳：常驻 class + 只挂 700ms 的触发 class。            */
+@keyframes jellyBounce {
+  0%   { scale: 1; }    18% { scale: 1.05; } 38% { scale: .97; }
+  58%  { scale: 1.02; } 76% { scale: .99; }  100% { scale: 1; }
+}
+.jelly-bounce-enabled.stage { animation: none; }
+body.jelly-bounce-enabled .stage { animation: none; }
+body.jelly-bounce-enabled.jelly-bounce-active .stage { animation: jellyBounce .7s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

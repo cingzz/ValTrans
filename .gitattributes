@@ -1,0 +1,27 @@
+# 统一换行：仓库里存 LF，工作区按平台自动转换
+* text=auto eol=lf
+
+# 二进制文件不做任何转换（否则会损坏）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.onnx  binary
+*.wav   binary
+*.mp3   binary
+*.exe   binary
+*.dll   binary
+*.pyd   binary
+*.sys   binary
+*.cat   binary
+*.zip   binary
+
+# 明确不转的行尾
+*.sh    text eol=lf
+*.py    text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf

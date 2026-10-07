@@ -1,0 +1,138 @@
+/* ==========================================================================
+   赞赏区
+   --------------------------------------------------------------------------
+   v0.2.11 需求背景：
+   > 「赞赏码千万不要折叠起来，要直接展开放在那里。还要调大一点，不要太小了。」
+
+   之前做成了 <details> 折叠（我以为"不打扰"优先），但这是**误判**：
+   折叠起来的结果是**没人看见**，等于白做。「支持一下」本身不该藏起来 ——
+   用户是认可了这个软件才来这个页子的，看到二维码是给他一个表达的方式。
+
+   所以：默认展开、图放大到 200px、去掉折叠箭头。
+   ========================================================================== */
+
+.donate {
+  margin-top: 12px;
+  padding: 18px 20px;
+  background: var(--vt-card, #fff);
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 14px;
+}
+
+.donate-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.donate-note {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: #8a8a8a;
+  margin: 0 0 16px;
+}
+
+.donate-note b { color: #666; }
+
+.donate-grid {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+
+.donate-item { width: 200px; }
+
+/* 二维码下方的小标题（v0.2.11：图放大后光看图不知道是哪个，
+   所以图下方给文字标注） */
+.donate-item-cap {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+/* 原先此处有一段孤立注释残片「放在 .meta 行里、字号很小 …… 该抢字幕的视线 */
+.sub-report {
+  margin-left: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: #8A94A6;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 9px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.sub-report:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 二维码放大：168 -> 200px。
+   微信/支付宝码在 200px 附近识别率明显更好，尤其在软件里
+   （截图发出去给别人扫的场景）。 */
+.donate-qr {
+  width: 200px;
+  height: 200px;
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 10px;
+  background: #fafafa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 12px;
+  color: #8a8a8a;
+  padding: 10px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.donate-qr img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+.donate-thanks {
+  margin-top: 16px;
+  font-size: 12px;
+  color: #8a8a8a;
+  line-height: 1.8;
+}
+
+.donate-thanks code {
+  background: rgba(0, 0, 0, .05);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.donate-thanks b { color: #666; }
+
+/* ==========================================================================
+   历史消息每条上的「误报」小按钮（v0.2.11）
+   --------------------------------------------------------------------------
+   放在 .meta 行里、字号很小 —— 误报是低频动作，不该抢字幕的视线。
+   放在 donate.css 里是因为它和「误报弹窗」是同一件事的两端
+   （这个按钮 + ReportDialog），放一起改起来不用来回找。
+   ========================================================================== */
+.sub-report {
+  margin-left: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: #8A94A6;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, .12);
+  border-radius: 9px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.sub-report:hover {
+  color: var(--accent, #ff8c42);
+  border-color: var(--accent, #ff8c42);
+}

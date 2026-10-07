@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 前端
+node_modules/
+webui/dist/
+webui/.vite/
+
+# 构建产物
+build/
+dist/
+*.spec.bak
+
+# ★ 本地配置（含 API Key，绝不入库）
+config.json
+secrets.json
+*.key
+*.pem
+.env
+
+# 日志与临时产物
+*.log
+logs/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 备份目录
+_backups/
+
+# Python 字节码与语法检查产物 —— 都不该进版本库
+# *.probechk 是我做语法检查时 py_compile 的输出，
+# 曾被误提交（编译于 15:54，早于上报反馈功能，是过时快照）
+*.pyc            # Python 字节码（构建产物）
+*.pyo            # 优化过的字节码
+*.probechk       # 语法检查产物：py_compile 的 cfile，禁止入库

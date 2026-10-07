@@ -1,0 +1,174 @@
+/* ============================================================================
+   ValTrans 设计令牌 —— 唯一来源（v0.2.21 重做）
+
+   依据：D:\AI测试游戏\清理\NexBox界面设计报告-如何设计这个UI.md
+
+   ★ 为什么要重写而不是改
+   ---------------------
+   改之前有**两套**打架的 token：
+       styles.css  --primary:#45BEE8（天蓝）
+       design.css  --brand-500:#E07A4F（暖橘，后加载，赢）
+   后果是「改了 --primary 没反应」这类问题。报告 §4.1 明写
+   「派生色全部用 color-mix()，不许手写十六进制」「换主题色只改一行」。
+   所以这里**只保留一套**，以新主色为唯一来源。
+
+   ★ 为什么不用报告默认的薄荷绿 #98DDD0
+   ------------------------------------
+   用户明确说过现在的绿色图标难看。而 ValTrans 是**游戏中**用的：
+   游戏画面主色集中在红/黄/绿/橙一带，薄荷绿在很多地图上会和
+   队友框、治疗提示、地面高亮撞色 —— 一个**辅助性**UI 不该跟游戏元素同色。
+   蓝（#60A5FA）在任何地图上都不与敌我元素撞色，且与游戏主色无关、辨识度高。
+   （报告给了 8 个预设色，#60A5FA 就在其中 —— 不算偏离方案。）
+
+   换主题色：只改下面这一行 --primary。
+   ============================================================================ */
+
+:root {
+  /* ---- L1 主题令牌：唯一强调色 + 三档中性字 + 一条线 ---- */
+  --primary: #60A5FA;                 /* 唯一强调色 */
+  --primary-fg: #0b1220;              /* 填充主色上的文字（深色，对比够）*/
+
+  /* 派生色一律 color-mix()，不许手写色值（报告 §4.1） */
+  --primary-hover:   color-mix(in srgb, var(--primary) 30%, transparent);
+  --primary-active:  color-mix(in srgb, var(--primary) 45%, transparent);
+  --primary-border:  color-mix(in srgb, var(--primary) 40%, transparent);
+  --primary-soft:    color-mix(in srgb, var(--primary) 14%, transparent);
+  --primary-strong:  color-mix(in srgb, var(--primary) 85%, transparent);
+
+  /* 中性字色只三档 + 一条线（报告 §4.3：出现第四档灰说明层级没想清楚）*/
+  --fg:   #14161b;                    /* 主文字 */
+  --fg-2: color-mix(in srgb, #14161b 66%, transparent);   /* 次要 */
+  --fg-3: color-mix(in srgb, #14161b 44%, transparent);   /* 说明 */
+  --line: color-mix(in srgb, #14161b 10%, transparent);   /* 发丝线 */
+  --bg:   #eef1f5;                    /* 页面底 */
+
+  /* ---- 语义色：只三个，且只用在小面积（报告 §4.4）---- */
+  --ok:     #12a55b;  --ok-bg:     color-mix(in srgb, #12a55b 12%, transparent);
+  --warn:   #ff8b3d;  --warn-bg:   color-mix(in srgb, #ff8b3d 14%, transparent);
+  --danger: #e5484d;  --danger-bg: color-mix(in srgb, #e5484d 12%, transparent);
+
+  /* ---- 材质：玻璃五件套分级（报告 §5：越大越透，越小越实）---- */
+  /* 顶栏要挡住滚动 -> 最实；玻璃台要透 -> 最透 */
+  --glass-veil:    rgba(255,255,255,.96);   /* 顶栏 .96（报告 §3.3 量出来的）*/
+  --glass-stage:   rgba(255,255,255,.26);   /* 大玻璃台 */
+  --glass-card:    rgba(255,255,255,.42);   /* 卡片/胶囊 */
+  --glass-ctrl:    rgba(255,255,255,.62);   /* 按钮/搜索/下拉，要读得清 */
+  --glass-line:    rgba(255,255,255,.70);
+  --glass-hi:      rgba(255,255,255,.85);   /* 内高光：玻璃有厚度的一半功劳 */
+  --glass-blur:    blur(30px) saturate(1.6);
+  --glass-blur-lg: blur(34px) saturate(1.7);
+
+  /* ---- 三档投影（报告 §5.1：越大 blur/位移/透明度越高、负 spread 越大）---- */
+  --sh-1: 0 1px 2px  rgba(30,40,60,.08);            /* 小控件 */
+  --sh-2: 0 10px 30px -12px rgba(30,40,60,.22);    /* 卡片/胶囊 */
+  --sh-3: 0 30px 70px -18px rgba(30,40,60,.34);    /* 玻璃台 */
+
+  /* ---- 圆角：跟着尺寸走，不是每个组件一个值（报告 §5.3）---- */
+  --r-pill:  99px;   /* 胶囊：搜索框、徽章、chip、开关、滑杆 */
+  --r-stage: 26px;   /* 大容器：玻璃台、rail */
+  --r-lg:    18px;
+  --r-card:  16px;
+  --r-md:    12px;
+  --r-sm:    10px;
+  --r-xs:     8px;   /* 小图标按钮 */
+
+  /* ---- 间距 ---- */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+
+  /* ---- 字号：9 级（报告 §6.2）---- */
+  --f-h1:    28px;  /* 页面标题 */
+  --f-stat:  36px;  /* 大数字 */
+  --f-title: 14.5px;/* 面板标题 */
+  --f-name:  13.5px;/* 顶栏名称 / 设置行标题 */
+  --f-body:  13px;  /* 正文/按钮/导航 */
+  --f-btn:   12.5px;
+  --f-note:  11.5px;/* 说明文字 */
+  --f-tag:   11px;  /* 分组标题（UPPERCASE）*/
+  --f-sec:   10.5px;/* 区块标题（UPPERCASE + 大字距）*/
+
+  /* ---- 动效：只有一个缓动 + 三档时长（报告 §8.1）---- */
+  --ease:  cubic-bezier(.4, 0, .2, 1);
+  --t-fast: .2s  var(--ease);
+  --t-mid:  .4s  var(--ease);
+  --t-slow: .6s  var(--ease);
+
+  /* ---- 字体（报告 §6.4：中文必须有回退链，Segoe UI 不含中文字形）---- */
+  --font: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui,
+          "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+
+  /* ---- 版面（报告 §3.1）---- */
+  --titlebar-h: 52px;
+  --rail-w:     76px;
+  --gap-float:  12px;          /* 侧栏离边：贴边的侧栏是窗口的一部分 */
+  /* ★ v0.2.21：pnav 已删（与 rail 内容重复），内容只需让开 rail 一条
+       = 离边 12 + 宽 76 + 再离边 12 + 呼吸 12 = 112
+     之前写 260px（96+152+12）—— 那是「rail + pnav」两栏时代的值，
+     删掉 pnav 后没跟着改，内容左侧会空出约 172px 死白（用户看不到内容）。  */
+  --main-x:     112px;
+  --main-pad:   62px 36px 32px 24px;
+
+  /* ---- 兼容旧名（本次重做期间可能还有组件引用）---- */
+  --text: var(--fg);
+  --muted: var(--fg-2);
+  --stroke: var(--line);
+  --card:  var(--glass-card);
+  --radius:    var(--r-stage);
+  --radius-s:  var(--r-sm);
+  --shadow:    var(--sh-2);
+  --primary-hover-legacy: var(--primary-hover);
+
+  /* ==========================================================================
+     v0.2.21 兼容层：旧令牌名 -> 新令牌
+     --------------------------------------------------------------------------
+     为什么需要这一段：我先前把 design.css / styles.css 里的令牌定义删掉了
+     （为消除「三套令牌打架」），但那些变量**仍在被 var() 引用** ——
+     实测 26 个变成未定义（--w0..--w8 / --brand-* / --f-* / --r-full …）。
+     CSS 里 `background: var(--w0)` 变量未定义时**整条声明作废**，
+     于是卡片/徽章/按钮集体失去背景，最后整页崩掉
+     （实测报 TypeError: e is not iterable）。
+
+     所以不是删，是**映射**。这一段是唯一的兼容入口：
+     旧组件继续用旧名，新代码用新名，最终都落到上面那套令牌上。
+
+     规则（报告 §4.1）：派生色一律 color-mix()，不许手写十六进制。
+     ========================================================================== */
+  /* 暖白色阶：旧 --w0(卡片) --w1(页面底) --w2(次级面) --w3(分隔) --w4(边框)
+     --w5(强边框) --w6(次要字) --w7(主文字) --w8(强调文字) */
+  --w0: var(--glass-card);
+  --w1: var(--bg);
+  --w2: color-mix(in srgb, var(--fg) 4%,  var(--glass-card));
+  --w3: var(--line);
+  --w4: color-mix(in srgb, var(--fg) 10%, transparent);
+  --w5: color-mix(in srgb, var(--fg) 18%, transparent);
+  --w6: var(--fg-2);
+  --w7: var(--fg);
+  --w8: color-mix(in srgb, var(--fg) 92%, var(--primary));
+
+  /* 主色阶：由唯一主色 color-mix 派生（报告 §4.1）*/
+  --brand-050: color-mix(in srgb, var(--primary) 10%, transparent);
+  --brand-100: color-mix(in srgb, var(--primary) 18%, transparent);
+  --brand-200: color-mix(in srgb, var(--primary) 30%, transparent);
+  --brand-400: color-mix(in srgb, var(--primary) 72%, #ffffff);
+  --brand-500: var(--primary);
+  --brand-600: color-mix(in srgb, var(--primary) 88%, #000000);
+  --brand-700: color-mix(in srgb, var(--primary) 74%, #000000);
+  --brand-800: color-mix(in srgb, var(--primary) 60%, #000000);
+
+  /* 旧字号阶梯：映射到 9 级新体系里语义最接近的几档 */
+  --f-xs: var(--f-note);
+  --f-sm: var(--f-note);
+  --f-md: var(--f-body);
+  --f-lg: var(--f-name);
+  --f-xl: var(--f-title);
+
+  /* 旧圆角/缓动/阴影别名 */
+  --r-full: var(--r-pill);
+  --ease-out: var(--ease);
+  --sh-brand: 0 8px 20px -8px var(--primary-strong);
+  --primary-text: color-mix(in srgb, var(--primary) 72%, var(--fg));
+  /* ── 材质分档的描边/内高光（报告 §3.1）────────────────────────
+     大面板（.stage）的描边 .55 / 内高光 .80，比卡片的 .70 / .85 浅一档。
+     报告原文：「这条 1px 的内白线贡献了一半的「玻璃厚度感」。      */
+  --glass-line-stage: rgba(255,255,255,.55);
+  --glass-hi-stage:   rgba(255,255,255,.80);
+}

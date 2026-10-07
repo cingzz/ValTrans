@@ -1,0 +1,7 @@
+﻿把微信/支付宝二维码图片放���这个目录，命名必须完全如下（改名不生效）：
+
+  webui/public/donate-wechat.png     微信赞赏码
+  webui/public/donate-alipay.png     支付宝收款码
+
+放好之后：npm run build 重新打包即可，无需改任何代码。
+图片不存在时会显示灰色占位框（不会破图），所以现在也能正常打包。

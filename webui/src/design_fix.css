@@ -1,0 +1,152 @@
+/* ★ v0.2.21：删掉了本文件对 .app-frame、.titlebar 的重定义 —— 壳层所有权归 shell.css。
+   旧版这些规则是为「无边框窗 + 旧布局」写的，重做后与新版面冲突。
+   保留本文件对 .btn.primary 特异度的修正（v0.2.7 踩出来的必要修正）。 */
+/* v0.2.7 修正层：把 styles.css 里写死亮色的规则换成 token。
+   放在 design.css 之后加载。
+   注：按钮/输入框的覆盖已并入 design.css（选择器强度对齐），
+       这里只留零散的历史规则修正。 */
+
+/* styles.css 的 input:focus 写死 background:#fff，
+   暖色体系下这块纯白很刺眼 —— 改回 token */
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+select:focus {
+  background: var(--w0);
+}
+
+/* ===========================================================================
+   v0.2.10 自绘标题栏（frameless 之后替代 Windows 原生标题栏）
+   ===========================================================================
+   配色全部取自 design.css 的暖橘 token，不写死亮色。
+   原生标题栏是 Windows 深色/蓝色的一条，跟暖橘护眼体系打架，
+   截图里一眼就能看出不是同一个软件 —— 这是本次改动的直接动机。
+   -------------------------------------------------------------------------- */
+
+/* 外壳：标题栏在上，内容在下。
+   .shell 自己是 height:100% 的横向 flex，直接在它上面插标题栏
+   会把内容挤出去，所以外面再套一层纵向 flex（app-frame）。 */
+
+.app-frame > .shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;              /* 覆盖 styles.css / design.css 的 height:100% */
+}
+
+/* cfg 未就绪时的加载态：无边框窗口里绝不能是纯白一块，
+   那看起来就像白屏/程序坏了（v0.2.10 血泪：return null 会这样） */
+.boot {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--w0);
+}
+.boot-spin {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 3px solid var(--w3);
+  border-top-color: var(--brand-500);
+  animation: boot-spin .8s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-spin { animation: none; }
+}
+.boot-text {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: .3px;
+}
+
+/* --- 标题栏本体 --- */
+
+
+/* 拖窗热区：整条标题栏（除按钮区）都能拖。
+   .pywebview-drag-region 是 pywebview 认的类名，
+   customize.js 的 onBodyMouseDown 无条件注册、走 DOM 向上找这个类，
+   所以**不需要** easy_drag=True（那反而会让全窗口都能拖）。 */
+.tb-drag { position: absolute; inset: 0; }
+.tb-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 14px;
+  min-width: 0;
+}
+.tb-logo {
+  width: 16px; height: 16px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
+  box-shadow: 0 1px 3px rgba(200, 110, 40, .35);
+  flex: 0 0 auto;
+}
+.tb-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--w8);
+  letter-spacing: .2px;
+  flex: 0 0 auto;
+}
+.tb-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tb-ver { font-style: normal; opacity: .65; }
+
+/* --- 右侧按钮 --- */
+.tb-right {
+  position: relative;           /* 盖在 .tb-drag 之上，按钮才能点到 */
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+.tb-btn {
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--w7);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: background .14s ease, color .14s ease;
+}
+.tb-btn svg { width: 15px; height: 15px; }
+.tb-btn:hover { background: rgba(220, 150, 90, .18); color: var(--w8); }
+.tb-btn:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.tb-btn:active { background: rgba(220, 150, 90, .3); }
+/* 置顶是文字按钮，给个固定宽度免得布局跳动 */
+.tb-top { width: 56px; font-size: 11.5px; letter-spacing: .2px; }
+.tb-top.on { color: var(--brand-700); background: rgba(240, 170, 110, .2); }
+.tb-close { width: 52px; }
+/* 关闭 hover 用危险色，和其它按钮区分开（应用商店级软件的惯例） */
+.tb-close:hover { background: #e0453a; color: #fff; }
+.tb-close:active { background: #c33a30; }
+
+/* 最大化时标题栏贴到屏幕边，圆角要去掉，否则四角会露白 */
+@media (prefers-reduced-motion: no-preference) {
+  .titlebar { transition: none; }
+}
+
+/* 学习弹窗沿用暖色 token */
+.ld-item { background: var(--w1); border-color: var(--w3); }
+.ld-btn.primary {
+  background: linear-gradient(180deg, var(--brand-500), var(--brand-600));
+  color: #fff;
+  box-shadow: var(--sh-brand);
+}
+.ld-btn.ghost { background: var(--w2); color: var(--w6); }
+.ld-btn.ghost:hover { background: var(--w3); }
+.ld-foot { background: linear-gradient(180deg, rgba(251,248,244,0), var(--w2)); }
+.ld-check input { accent-color: var(--brand-500); }
