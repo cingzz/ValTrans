@@ -23,6 +23,19 @@ GitHub Releases 的好处：
 版本比较：语义化版本，**只比 release/pre-release 的版本号**，
 不猜发布日期（发布日期会因为补发/重发乱掉）。
 
+★ 同版本不同构建（v0.2.22 起）
+------------------------------
+只比版本号有个真实漏洞：**同一个版本号下重打二进制，老用户永远收不到通知**。
+本项目 v0.2.22 就因此出过事 —— 传上去的产物早于代码修改，
+可产物里的 VERSION 已经是 0.2.22，于是「��是最新」骗过了所有人。
+
+所以版本号相同时再比一个 BUILD 标识（见 `src/version.py` 的说明）：
+线上 BUILD 由 valtrans-lexicon 的 `latest.json` 发布，
+本地 BUILD 编译在本程序里，不同就说明有更新的构建可下。
+
+**取不到 BUILD 绝不能把整个检查判成失败** —— 那是指纹机制本身的可用性问题，
+不该连累版本号比较。所以指纹失败一律静默降级为「按老逻辑判断」。
+
 **不自动下载、不自动安装。**
 自动更新必须让用户看到「哪个版本、变了什么、多大文件」再点确认 ——
 静默下载并替换一个 60MB 的 exe 是所有软件最招人烦的行为，
@@ -37,13 +50,19 @@ import re
 import httpx
 
 from ..core.security import safe_client
+from .. import version as _ver
 
 API = "https://api.github.com/repos/{repo}/releases/latest"
 DOWNLOAD_PAGE = "https://github.com/{repo}/releases/latest"
 
+# ★ 本地构建标识。用 getattr 而不是直接 import：
+#   万一某个旧产物/裁剪版里没有 BUILD 这个常量，直接 import 会
+#   NameError 把整个「检查更新」搞崩。取不到就退化成空串 = 不做指纹判断。
+LOCAL_BUILD = str(getattr(_ver, "BUILD", "") or "").strip()
+
 # ★ v0.2.19：大陆直连 GitHub 经常超时。词库仓库（我们自己的）在 jsdelivr
 #   CDN 有镜像且国内可达，放一份 latest.json 兼做「更新检查兜底」：
-#   GitHub API 失败 → 读 CDN 上的 {version,url,notes}。
+#   GitHub API 失败 → 读 CDN 上的 {version,url,notes,build}。
 FALLBACK_LATEST = [
     "https://fastly.jsdelivr.net/gh/cingzz/valtrans-lexicon@main/latest.json",
     "https://cdn.jsdelivr.net/gh/cingzz/valtrans-lexicon@main/latest.json",
@@ -68,6 +87,32 @@ def _get(url: str) -> bytes:
         return r.content
 
 
+def fetch_remote_build() -> str:
+    """取线上发布的 BUILD 标识。**任何异常都吞掉并返回空串。**
+
+    为什么不走 GitHub API
+    --------------------
+    Release 的 JSON 里没有自定义字段，除非改用 tag 指向的 commit SHA
+    （要多打一次接口、还多一个失败点）。而 latest.json 本来就是
+    「不联网也能知道最新版」的兜底通道，顺手放 build 最省事。
+
+    为什么必须吞异常
+    --------------
+    指纹只是**附加**判断。CDN 抽风、词库仓库改名、latest.json 格式变了
+    ……任何一种都不该让「检查更新」整体失败 —— 版本号比较才是主功能。
+    """
+    for u in FALLBACK_LATEST:
+        try:
+            raw = _get(u)
+            data = json.loads(raw.decode("utf-8", "replace"))
+            v = str(data.get("build", "") or "").strip()
+            if v:
+                return v
+        except Exception:
+            continue
+    return ""
+
+
 def parse_version(v: str) -> tuple:
     """'0.2.11' -> (0, 2, 11)。非数字部分忽略。"""
     nums = re.findall(r"\d+", (v or "").strip().lstrip("vV"))
@@ -79,20 +124,58 @@ def is_newer(remote: str, local: str) -> bool:
     return parse_version(remote) > parse_version(local)
 
 
+def _judge(out: dict, local_version: str, remote_build: str = "") -> None:
+    """统一的判定出口：版本比较 + 构建指纹比较，写进 out 并给出文案。
+
+    ★ 为什么要收成一个函数
+    ----------------------
+    直连通道和 CDN 兜底通道各自算一次 ``has_update``/``msg``，
+    逻辑一重复就必然漏改一处（这次加指纹就是典型场景）。
+    两边都调它，指纹规则只有一份实现。
+
+    规则：
+      版本更高          -> has_update，「发现新版本 vX」
+      版本相同 + BUILD 不同 -> has_update，「同版本有更新构建」
+      版本相同 + BUILD 相同 -> 无更新，「已是最新」
+      取不到线上 BUILD   -> 静默按「无更新」处理（不报错、不误导）
+    """
+    newer = is_newer(out["remote"], local_version)
+    out["has_update"] = newer
+    out["rebuild"] = False
+
+    if newer:
+        out["msg"] = f"发现新版本 v{out['remote']}（当前 v{local_version}）"
+        return
+
+    # 版本号相同 —— 只有在两边都有 BUILD 且不同，才算「有新构建」
+    if LOCAL_BUILD and remote_build and remote_build != LOCAL_BUILD:
+        out["rebuild"] = True
+        out["has_update"] = True
+        out["msg"] = (f"v{out['remote']} 有更新构建（{LOCAL_BUILD} → "
+                      f"{remote_build}），含修复，建议重新下载")
+    else:
+        out["msg"] = f"已是最新（v{local_version}）"
+
+
 def check(repo: str = "cingzz/ValTrans", local_version: str = "") -> dict:
     """检查更新。
 
-    返回：``{ok, has_update, remote, latest_url, notes, assets[], msg}``
+    返回：``{ok, has_update, rebuild, remote, local, latest_url, notes,
+    assets[], msg}``
 
     绝不抛异常 —— 网络不通/仓库不存在/限流都要如实回报，
     不能让「检查更新」这个按钮把设置页搞崩。
     """
-    out = {"ok": False, "has_update": False, "remote": "", "local": local_version,
-           "latest_url": "", "notes": "", "assets": [], "msg": ""}
+    out = {"ok": False, "has_update": False, "rebuild": False, "remote": "",
+           "local": local_version, "latest_url": "", "notes": "",
+           "assets": [], "msg": ""}
     if not local_version:
         from ..version import VERSION
         local_version = VERSION
         out["local"] = local_version
+
+    remote_build = ""
+
     try:
         raw = _get(API.format(repo=repo))
         data = json.loads(raw.decode("utf-8", "replace"))
@@ -115,10 +198,11 @@ def check(repo: str = "cingzz/ValTrans", local_version: str = "") -> dict:
                 out["remote"] = tag.lstrip("vV")
                 out["latest_url"] = fb.get("url") or DOWNLOAD_PAGE.format(repo=repo)
                 out["notes"] = (fb.get("notes") or "").strip()[:1500]
-                out["has_update"] = is_newer(out["remote"], local_version)
-                out["msg"] = (f"发现新版本 v{out['remote']}（当前 v{local_version}）"
-                              if out["has_update"] else f"已是最新（v{local_version}）"
-                              ) + "（CDN 通道）" + SHA_HINT
+                # ★ 这份 latest.json 本来就已在手上，build 直接取，
+                #   不用再发一次请求
+                remote_build = str(fb.get("build", "") or "").strip()
+                _judge(out, local_version, remote_build)
+                out["msg"] += "（CDN 通道）" + SHA_HINT
                 return out
             except Exception:
                 continue
@@ -141,11 +225,13 @@ def check(repo: str = "cingzz/ValTrans", local_version: str = "") -> dict:
             "url": a.get("browser_download_url", ""),
             "downloads": a.get("download_count", 0),
         })
-    out["has_update"] = is_newer(out["remote"], local_version)
-    if out["has_update"]:
-        out["msg"] = f"发现新版本 v{out['remote']}（当前 v{local_version}）"
-    else:
-        out["msg"] = f"已是最新（v{local_version}）"
+
+    # ★ 只有「版本号相同」时才去取指纹：
+    #   版本已经更高时结论已定，没必要为一个用不上的判断多发一次请求。
+    if not is_newer(out["remote"], local_version):
+        remote_build = fetch_remote_build()
+
+    _judge(out, local_version, remote_build)
     out["msg"] += SHA_HINT
     return out
 

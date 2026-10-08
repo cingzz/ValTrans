@@ -73,7 +73,12 @@ export default function UpdatePanel({ version, onCheck, openUrl }) {
       {has && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--accent)" }}>
-            发现新版本 v{r.remote}
+            {/* ★ 同版本重打二进制时，版本号没变，说「发现新版本」是误导。
+                这条分支靠 update.py 的 rebuild 标记驱动 —— 它在
+                「版本号相同但线上 BUILD 与本地 BUILD 不同」时置位。 */}
+            {r.rebuild
+              ? `v${r.remote} 有更新构建（含修复）`
+              : `发现新版本 v${r.remote}`}
           </div>
 
           {r.assets && r.assets.length > 0 && (
