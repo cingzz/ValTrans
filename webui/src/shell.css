@@ -154,15 +154,28 @@ html, body {
   box-shadow: var(--sh-2), inset 0 1px 0 var(--glass-hi);
 }
 
-/* 大面板 / 台：更透 + 更强模糊 + --sh-3 */
-.stage {
-  position: relative;
-  background: var(--glass-stage);
-  backdrop-filter: var(--glass-blur-lg);
-  -webkit-backdrop-filter: var(--glass-blur-lg);
-  border: 1px solid var(--glass-line-stage);
-  box-shadow: var(--sh-3), inset 0 1px 0 var(--glass-hi-stage);
-}
+/* ★ v0.3.1：这里原有一份完整的 .stage（大面板/台：更透 + 更强模糊 + --sh-3），
+     已**整块合并**到文件下方「玻璃台」那段 .stage 里。
+
+   合并过程分两步，值得记：
+
+   ① 先发现两块 .stage 的 background / backdrop-filter / border /
+      box-shadow **值不同** —— 下面那块写的是具体的 rgba(255,255,255,.55)，
+      同特异性下靠后胜，所以上面这四项从来没生效过。
+      但当时**不能整块删**：下面那块没有 `position: relative`，它至今
+      由上面这块提供。这是「删落选者 = 行为不变」在 CSS 里必须
+      **按属性**而不是按块做的原因（Python 那边是「同一赋值名」整条落选，
+      CSS 是「同属性」才落选）。
+
+   ② 第一版于是留了个只剩 `position: relative` 的 .stage —— 行为对了，
+      却**撞坏了 audit_ui_shell 的「玻璃五件套」判据**：那道判据取的是
+      **第一个** .stage 块，削剩一行之后它自然没有 backdrop-filter，
+      于是判红。判据的意图（一个面一份完整规则，别让人只改到半份）
+      本身是对的，错在我留了个半截块。
+
+   所以最终解法是**把 position: relative 挪进下面那块，这里整块删掉**。
+   教训：清理重复定义时，「留个最小块保命」是过渡态，不是终态 ——
+   过渡态照样会被别的判据当成真形态去检查。 */
 
 /* 按钮 / 输入 / 下拉：.62 —— 最实的一档，文字要能压住背景 */
 .btn, .inp, .sel, .seg, .chip, .badge {
@@ -227,10 +240,19 @@ html, body {
 /* main 让位给 fixed 的 rail
    ★ v0.2.21：本文件原先有**两处** .main 规则（这里 + 下面「主内容」那段），
      后者覆盖前者的 margin-left —— 同一个判断两份实现，改一处必漏另一处
-     （同一条通则）。现在合并成下面那一处唯一的 .main。 */
-.main {
-  --mx: 50%; --my: 0%;
-}
+     （同一条通则）。当时写的是「现在合并成下面那一处唯一的 .main」。
+
+   ★ v0.3.1：那次合并**没合干净**（已删除残留，见下）
+     下面那段已经是一份完整的 .main（--mx/--my + position + z-index +
+     flex + margin-left + padding），而这里还留着一个只剩
+     `--mx: 50%; --my: 0%;` 的空壳。值完全相同、靠后胜出，
+     所以它从来没生效过 —— 留着的唯一效果是骗读者。
+
+     值得记的是：**注释声称已经合并，而残留就在这段注释的正下方。**
+     「注释说做完了」和「真的做完了」是两件事。本项目这轮已经
+     在 Python 侧撞过四次（_WEAK_CONTEXT / _ANCHORS / _clean_phrase /
+     enforce），这是第五次，也是第一次撞在 CSS 上。
+     结论不变：**判断有没有残留，不能靠读注释，只能靠判据扫**。*/
 /* .content 是**唯一的滚动区**（报告 §3.5）：
    顶栏/rail/pnav 全部 fixed，只滚内容 —— 滚动时导航不动。 */
 .content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
@@ -334,8 +356,11 @@ html, body {
   padding-top: calc(var(--titlebar-h) + 10px);
 }
 
-/* 玻璃台：只提供**一个**背景，内部全靠 1px 线切分（报告 §7.5）*/
+/* 玻璃台：只提供**一个**背景，内部全靠 1px 线切分（报告 §7.5）
+   ★ v0.3.1：position: relative 从上面那份已删掉的 .stage 合并过来 ——
+     它一直由那份提供，合并时必须带过来，否则布局会悄悄变。 */
 .stage {
+  position: relative;
   border-radius: var(--r-stage);
   padding: 2px 26px 14px;
   margin-bottom: 26px;

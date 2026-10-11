@@ -162,7 +162,9 @@ export default function Wizard({ cfg, patchCfg, onDone }) {
               <button className="btn" onClick={() => call('open_url', 'https://cloud.siliconflow.cn/account/ak')}>② 打开密钥页面</button>
             </div>
             <div className="row">
-              <input className="grow" type="text" placeholder="粘贴 sk- 开头的密钥（识别+翻译共用）"
+              {/* ★ v0.3.1：同 Settings.jsx —— Key 输入框改 password，不再明文可见 */}
+              <input className="grow" type="password" autoComplete="off" spellCheck={false}
+                     placeholder="粘贴 sk- 开头的密钥（识别+翻译共用）"
                      value={key} onChange={e => setKey(e.target.value)} />
               <button className="btn primary" disabled={testing || !key.startsWith('sk-')}
                       onClick={async () => { setTesting(true); setKeyState('测试中…'); await call('test_key', key.trim()) }}>

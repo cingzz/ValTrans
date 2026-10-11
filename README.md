@@ -94,7 +94,7 @@ tools/bin/inno/ISCC.exe packaging/setup.iss                # 生成安装包
 | 路径 | 内容 |
 |---|---|
 | `src/core/` | 音频采集、VAD 断句、两级流水线、安全模块 |
-| `src/services/` | 云端 ASR/翻译引擎、本地黑话表、词库同步、TTS、PTT、反馈草稿 |
+| `src/services/` | 服务商抽象层 `providers/`（ASR/翻译/TTS 统一接口）、云端引擎、本地黑话表、词库同步、TTS、PTT、反馈草稿 |
 | `src/uiweb/` | WebView2 主窗 + WinForms 原生浮窗 |
 | `assets/` | silero VAD、图标、VB-CABLE 官方包、音频样本 |
 | `scripts/` | 安全闸门（提交前检查密钥）与自证脚本 |

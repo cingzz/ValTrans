@@ -43,6 +43,8 @@ import json
 import os
 import threading
 import time
+
+from ..core.atomicio import atomic_write_json
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -92,8 +94,9 @@ def _load() -> dict:
 
 def _save(d: dict) -> None:
     try:
-        _cand_path().write_text(
-            json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        # ★ v0.3.1：原子写（同 tm.py 的理由）—— 这里存的是**候选词**，
+        #   半截 JSON 会让整个候选池读不出来，用户点过「采纳」的词全部消失。
+        atomic_write_json(_cand_path(), d, indent=2)
     except OSError:
         pass
 
@@ -230,8 +233,10 @@ def adopt(src: str, dst: str, target: str = "zh") -> bool:
     lex = load_lexicon()
     lex[_key(src, target)] = dst.strip()
     try:
-        p.write_text(json.dumps(lex, ensure_ascii=False, indent=2),
-                     encoding="utf-8")
+        # ★ v0.3.1：原子写。这里是**用户词库** —— 用户点过「采纳」的成果，
+        #   比候选池更金贵：半截 JSON 会让 load_lexicon() 读回空，
+        #   用户所有采纳记录一次性消失，且界面上没有任何提示。
+        atomic_write_json(p, lex, indent=2)
     except OSError:
         return False
     # 从候选池移除
@@ -279,8 +284,7 @@ def set_pref(k: str, v) -> dict:
     d = get_prefs()
     d[k] = v
     try:
-        _pref_path().write_text(json.dumps(d, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
+        atomic_write_json(_pref_path(), d, indent=2)
     except OSError:
         pass
     return d

@@ -53,6 +53,7 @@ import time
 from pathlib import Path
 
 from ..core.config import CONFIG_DIR
+from ..core.atomicio import atomic_write_json, atomic_write_text
 
 _LOCK = None                      # 同步是低频操作，不加锁
 
@@ -89,9 +90,9 @@ def _read_json(p: Path, default):
 
 
 def _write_json(p: Path, d) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n",
-                 encoding="utf-8")
+    # ★ v0.3.1：原子写（同 tm.py 的理由）。词库缓存损坏的表现是
+    #   「词库更新说成功了，但一查还是老词」—— 用户只会反复点更新。
+    atomic_write_json(p, d, indent=2, trailing_newline=True)
 
 
 def _lexicon_path() -> Path:
@@ -143,9 +144,7 @@ def refresh_from_cdn(force: bool = False) -> dict:
             out["ok"] = True
             out["msg"] = f"词库已是最新（v{local.get('version')}）"
             return out
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
-                         encoding="utf-8")
+        _write_json(CACHE, raw)      # ★ v0.3.1：原子写（原来直接覆盖写）
         n = merge_into_tm()
         out["ok"] = True
         out["updated"] = True
@@ -240,8 +239,10 @@ def pull(repo: Path) -> dict:
         repo_v = int(_read_json(LEXICON, {}).get("version", 0))
         cache_v = int(_read_json(CACHE, {}).get("version", 0)) if CACHE.exists() else -1
         if repo_v > cache_v:
-            CACHE.parent.mkdir(parents=True, exist_ok=True)
-            CACHE.write_text(LEXICON.read_text(encoding="utf-8"), encoding="utf-8")
+            # ★ v0.3.1：原子写。这一步是「把仓库文件原样拷进用户缓存」，
+            #   半截缓存会让 lexicon() 读回 default，表现为
+            #   「同步说成功了，词却一条没多」。
+            atomic_write_text(CACHE, LEXICON.read_text(encoding="utf-8"))
     except Exception:
         pass
     return {"ok": True, "merged": n, "msg": f"已同步，合并 {n} 条到本地词库"}

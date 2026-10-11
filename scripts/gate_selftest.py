@@ -49,6 +49,11 @@ _AWS = "AKIA" + "IOSFODNN7EXAMPLE"
 _GHP = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123"
 _XOX = "xoxb-" + "123456789012-" + "abcdefghijkl"
 _PLACEHOLDER = "sk-" + "xxxx"          # 文档常见的占位写法，必须放行
+# v0.3.1：负特征判据（security_gate.is_fixture）的夹具样本。
+# 同样**拆片段** —— 第一版直接写字面量，自证文件自己被判红，
+# 后面每一例都被污染（本文件开头说明的就是这个坑，我又踩了一次）。
+_FIXTURE_WORD = "sk-" + "THISKEYISINTENTIONALLY" + "INVALID00"
+_FIXTURE_LOWENTROPY = "sk-" + "bbbbbbbb" + "bbbbbbbbbbbbbbbb"
 
 CASES = [
     # (说明, 注入内容, 是否必须拦下)
@@ -71,13 +76,25 @@ CASES = [
     ("正常源码", 'print("hi")\nVERSION="0.2.22"\n', False),
     ("文档里的示例 Key（占位）",
      '例如 API_KEY = "%s" # 占位\n' % _PLACEHOLDER, False),
+    # ── v0.3.1：负特征判据（is_fixture）的边界 ──────────────────
+    #  「真 Key 仍被拦」这一侧**不需要**新加用例 —— 上面的 FAKE_KEY
+    #  本身就是随机串、不含占位词、无 8 连同字符，已经覆盖了。
+    #  这里只补负特征自己认得出夹具的两例；缺了它们，
+    #  is_fixture 写成「一律返回 True」也能全绿。
+    #  ★ 样本仍按本文件的规矩**拆成片段**（见开头说明）：
+    #    第一版直接写字面量，结果自证文件自己被判红，
+    #    后面所有「必须放行」的用例全被污染 —— 自证当场抓的。
+    ("夹具：自述占位词", 'BAD = "%s"\n' % _FIXTURE_WORD, False),
+    ("夹具：8 连同字符（低熵）", 'BAD = "%s"\n' % _FIXTURE_LOWENTROPY, False),
 ]
 
 
-def run(paths, no_git=True):
+def run(paths, no_git=True, strict=False):
     args = [sys.executable, "-X", "utf8", GATE]
     if no_git:
         args.append("--no-git")
+    if strict:
+        args.append("--strict")
     p = subprocess.run(args + paths, capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -116,6 +133,29 @@ def main() -> int:
                 for l in out.split("\n"):
                     if "FAIL" in l:
                         print("        %s" % l.strip()[:100])
+    finally:
+        if os.path.exists(probe):
+            os.remove(probe)
+
+    # ── v0.3.1：--strict 必须把夹具也判红 ────────────────────────
+    #  没有这一例的话，`is_fixture` 哪天被改成「一律返回 True」，
+    #  默认闸门照样绿、上面 17 例照样全过 —— 而 --strict 就再也拦不住
+    #  任何东西了。也就是：**默认路径的绿，证明不了逃生阀还开着**。
+    print()
+    print("  --- --strict：夹具也必须拦 ---")
+    try:
+        io.open(probe, "w", encoding="utf-8", newline="\n").write(
+            'BAD = "%s"\n' % _FIXTURE_WORD)
+        rc_soft, _ = run([ROOT])
+        rc_hard, _ = run([ROOT], strict=True)
+        if rc_soft != 0:
+            print("  FAIL 默认模式没放过夹具 —— 闸门会永远红，等于没有闸门")
+            bad += 1
+        elif rc_hard == 0:
+            print("  FAIL --strict 放过了夹具 —— 发布前把关失效")
+            bad += 1
+        else:
+            print("  OK   默认放过 / --strict 拦下（两种模式都能红也能绿）")
     finally:
         if os.path.exists(probe):
             os.remove(probe)

@@ -43,6 +43,8 @@ import json
 import os
 import threading
 import time
+
+from ..core.atomicio import atomic_write_json, atomic_write_text
 from pathlib import Path
 
 _LOCK = threading.Lock()
@@ -80,9 +82,10 @@ def _load() -> dict:
 
 def _save(d: dict) -> None:
     try:
-        p = _path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        # ★ v0.3.1：原子写 —— 这个文件记的是**已上报去重键**，
+        #   损坏的后果不是丢数据，而是反过来：去重失效后同一个错误
+        #   会被反复打包上报，用户莫名其妙多出一堆报告草稿。
+        atomic_write_json(_path(), d, indent=None)
     except Exception:
         pass
 
@@ -96,7 +99,10 @@ def _local_uid() -> str:
         if key.exists():
             return key.read_text(encoding="utf-8").strip()
         u = uuid.uuid4().hex
-        key.write_text(u, encoding="utf-8")
+        # 原子写：这个文件若被写成 0 字节，exists() 仍为 True、
+        # read_text() 返回空串 -> 本机 uid 每次启动都不一样，
+        # 「同一个人不重复刷票」就失效了（但没人会发现）。
+        atomic_write_text(key, u)
         return u
     except Exception:
         return hashlib.blake2b(str(os.environ.get("COMPUTERNAME", "")),

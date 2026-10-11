@@ -20,10 +20,12 @@
 队友说的是哪个点。而它们是**可枚举、可判定的**少数几个，
 所以在云端出字之后、本地做一次有证据的纠错，是最便宜见效的做法。
 
-与 cross_check.enforce 的区别（别混起来）
-----------------------------------------
-`cross_check.enforce` 做的是「云端没用我们的译法时**记账**」，刻意**不改写**
-——因为译文语序不可知，机械插词会造出病句（需求背景：「一定要通顺一点」）。
+与 cross_check.audit_missed_terms 的区别（别混起来）
+----------------------------------------------------
+`cross_check.audit_missed_terms`（原名 `enforce`，v0.3.1 改名 ——
+旧名声称「强制改回来」，而它**从不改译文**，只把漏译的术语列出来）
+刻意**不改写**——因为译文语序不可知，机械插词会造出病句
+（需求背景：「一定要通顺一点」）。
 
 本模块只做一件事：**整词的、已知错误的替换**。不插词、不调语序、不重排，
 所以不存在造病句的风险。这是两件不同的事，判据不同。
@@ -193,6 +195,30 @@ def _residual_term_table() -> list[tuple]:
 
 _ZH_OK = re.compile(r"[\u4e00-\u9fff]")
 _TERM_TAB = None
+# 预编译结果：(整词正则, 替换串, 英文原词)。顺序 = 多词在前、长词在前。
+_TERM_PATS = None
+
+
+def _build_term_pats(tab: list[tuple[str, str]]):
+    """把 (en, zh) 表编译成可直接 sub 的正则表，**只在首次调用时跑一次**。
+
+    ★ 三条规则都必须在这里，不能挪走：
+      1. 词边界只按 ASCII 字母数字判 —— Python 的 ``\\b`` 用 Unicode 语义，
+         汉字也算单词字符，于是「点|rush」之间没有边界，实测 rush 替换不掉。
+         （同一个坑在 ``B站`` 上踩过一次，判据必须一致。）
+      2. ``_KEEP_LATIN`` 过滤也在这里 —— 它是常量集合，跟着一起预计算掉。
+      3. 多词条目排在前面 —— 否则「nice try」会被拆成 nice 先替换掉。
+    """
+    multi: list[tuple[re.Pattern, str, str]] = []
+    single: list[tuple[re.Pattern, str, str]] = []
+    for en, zh in tab:
+        if en in _KEEP_LATIN:
+            continue
+        pat = re.compile(
+            r"(?<![A-Za-z0-9])" + r"\s+".join(re.escape(w) for w in en.split())
+            + r"(?![A-Za-z0-9])", re.I)
+        (multi if " " in en else single).append((pat, zh, en))
+    return multi + single
 
 
 def _build_term_tab() -> list[tuple[str, str]]:
@@ -208,27 +234,39 @@ def _build_term_tab() -> list[tuple[str, str]]:
 
 
 def fix_residual_latin(translated: str) -> tuple[str, list[str]]:
-    """把译文里残留的英文词替换成词表里已核实的译法。"""
-    global _TERM_TAB
-    if _TERM_TAB is None:
+    """把译文里残留的英文词替换成词表里已核实的译法。
+
+    ★ v0.3.1 性能（外部审计 Step-5 优化1，实测 146 ms/条）
+    ------------------------------------------------------
+    原来的写法在**每一次调用**里干三件事：
+
+        multi  = [kv for kv in _TERM_TAB if " " in kv[0]]   # 全表扫一遍
+        single = [kv for kv in _TERM_TAB if " " not in kv[0]]  # 再扫一遍
+        for en, zh in multi + single:
+            pat = re.compile(...)        # ← 每个词每条字幕都重新编译
+
+    而这个函数是**每条字幕都要走**的热路径。词表上千条时，
+    一条 12 词的字幕就要编译上千个正则 —— 146 毫秒全花在「编译同样的东西」上。
+
+    现在改成：正则**建一次**（`_TERM_PATS`），之后每次只做匹配。
+    `multi + single` 的**顺序**保持不变（长词优先，否则 nice try 会被
+    拆成 nice 先替换掉）—— 这一点是行为，不是实现细节，必须保住。
+
+    ★ 为什么这个 bug 能躲过 588 项检查
+    --------------------------------
+    因为它**功能完全正确**，只是慢。所有「对不对」的判据都是绿的，
+    只有去**数做了几次**才看得见。这与本项目记的「有≠对」是同一族的反面：
+    「结果对」和「代价合理」是两件事。
+    """
+    global _TERM_TAB, _TERM_PATS
+    if _TERM_PATS is None:
         _TERM_TAB = _build_term_tab()
-    if not translated or not _TERM_TAB:
+        _TERM_PATS = _build_term_pats(_TERM_TAB)
+    if not translated or not _TERM_PATS:
         return translated, []
     out = translated
     applied = []
-    # 多词条目优先：否则「nice try」会被拆成 nice 先替换掉。
-    multi = [kv for kv in _TERM_TAB if " " in kv[0]]
-    single = [kv for kv in _TERM_TAB if " " not in kv[0]]
-    for en, zh in multi + single:
-        if en in _KEEP_LATIN:
-            continue
-        # ★ 词边界只按 ASCII 字母数字判。
-        #   Python 的 `\b` 用 Unicode 语义，汉字也算单词字符，于是
-        #   「点|rush」之间没有边界 -> 实测 rush 替换不掉。
-        #   （同一个坑在 `B站` 上踩过一次，这里必须用同一判据。）
-        pat = re.compile(
-            r"(?<![A-Za-z0-9])" + r"\s+".join(re.escape(w) for w in en.split())
-            + r"(?![A-Za-z0-9])", re.I)
+    for pat, zh, en in _TERM_PATS:
         new = pat.sub(zh, out)
         if new != out:
             applied.append("%s->%s" % (en, zh))

@@ -174,6 +174,13 @@ class TTSPlayer:
         # ★ v0.2.18：CosyVoice2 云端音色走硅基流动（与 MT/ASR 同一把 Key）。
         # 空 Key 时自动跳过云端款、用本地 edge 音色。
         self.sf_key = sf_key
+        # ★ v0.3.0：云端 TTS 的服务商选择与 Key。
+        #   默认 local（本地 edge 链）—— 不改成云端是刻意的：
+        #   云端每次 PTT 多一次网络往返（实测 1.4~2.5 秒），
+        #   而本地链几乎无延迟。做成可选档而不是默认。
+        self.tts_preset = "local"
+        self.tts_key = ""
+        self._tts_ep = ("", "", "siliconflow_cosy")
         self._q: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=8)
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._running = False
@@ -226,21 +233,72 @@ class TTSPlayer:
                 log.exception("TTS 合成/播放失败")  # 不再静默：静默吞异常曾让朗读无声故障难以排查
                 continue  # 单句失败不影响队列
 
+    def _tts_endpoint(self) -> tuple[str, str, str]:
+        """取当前 TTS 档的 (base_url, model, provider_key)。
+
+        ★ 为什么不直接读 cfg
+        ------------------
+        TTSPlayer 是**无配置对象** —— 它只被 new(voice, enabled, rate,
+        pitch, sf_key) 构造一次，之后由 api.save_cfg / start 逐项赋值
+        （`self._tts.voice_override = ...` 这样）。
+        直接持有 cfg 会让它成为第二个配置来源，而项目里
+        「同一个值散在两处」正是反复出问题的地方
+        （plan_voice/resolve_voice 同名、_EXTRA2 绕过担保闸门）。
+
+        所以这里是**一个** setter，api 在那几处统一调用它，
+        值只从 cfg 进来一次。
+        """
+        return self._tts_ep
+
+    def configure_tts(self, preset: str, key: str,
+                      base_url: str, model: str) -> None:
+        """由 api 统一调用，把 TTS 档位从 cfg 灌进来。"""
+        self.tts_preset = preset or "local"
+        self.tts_key = key or ""
+        self._tts_ep = (base_url or "", model or "", "xiaomi_tts"
+                        if (base_url and "xiaomimimo" in base_url)
+                        else "siliconflow_cosy")
+
     def _synth_for_lang(self, text: str, lang: str) -> bytes:
-        """按语言解析音色合成；云端/多语人声不可用时自动降级到本地音色。"""
+        """按语言解析音色合成；云端/多语人声不可用时自动降级到本地音色。
+
+        ★ v0.3.0：云端 TTS 的选择从「音色名带 cosy: 前缀」升级为
+          「先看 tts_preset 选中的服务商，再看音色前缀」。
+          为什么要两个：
+            · 旧逻辑只看 `cosy:` 前缀，那只对硅基成立。
+              小米的音色名（Mia/Chloe/…）没有前缀，按旧逻辑永远走不到。
+            · 但音色前缀不能删 —— voices.json 里 cos yvoice 音色是靠它
+              标记的，而且用户手动选音色时不该被 preset 覆盖。
+          所以 preset 命中云端档时走 provider，没命中时**原样走旧逻辑**，
+          保证 0.2.x 的行为一点没变。
+        """
         voice = resolve_voice(self.voice_override, lang)
-        # ★ v0.2.18：CosyVoice2 云端音色（voices.json 里 provider=cosyvoice、
-        # id 前缀 cosy:）。没配硅基 Key 时直接用本包兜底音色，不浪费时间。
-        if voice.startswith("cosy:"):
-            if not self.sf_key:
+        preset = getattr(self, "tts_preset", "local") or "local"
+
+        if preset == "xiaomi_tts":
+            if not self.tts_key:
                 voice = FALLBACK_BY_LANG.get(lang) or voice
             else:
                 try:
-                    return self._synth_cosy(text, voice[5:])
+                    return self._synth_xiaomi(text)
                 except Exception:
-                    log.warning("CosyVoice 合成失败，回落 edge-tts 本地音色",
-                                exc_info=True)
+                    # 云端失败一律回落本地链 —— TTS 是锦上添花，
+                    # 绝不能因为它把用户的 PTT 卡住
+                    log.warning("小米 TTS 合成失败，回落本地音色", exc_info=True)
                     voice = FALLBACK_BY_LANG.get(lang) or voice
+        elif preset == "siliconflow_cosy" or voice.startswith("cosy:"):
+            # ★ v0.2.18：CosyVoice2 云端音色（voices.json 里 provider=cosyvoice、
+            #   id 前缀 cosy:）。没配硅基 Key 时直接用本包兜底音色，不浪费时间。
+            if voice.startswith("cosy:"):
+                if not self.sf_key:
+                    voice = FALLBACK_BY_LANG.get(lang) or voice
+                else:
+                    try:
+                        return self._synth_cosy(text, voice[5:])
+                    except Exception:
+                        log.warning("CosyVoice 合成失败，回落 edge-tts 本地音色",
+                                    exc_info=True)
+                        voice = FALLBACK_BY_LANG.get(lang) or voice
         try:
             return self._synth(text, voice)
         except Exception:
@@ -249,6 +307,26 @@ class TTSPlayer:
                 raise
             log.warning("音色 %s 合成失败，自动降级为 %s", voice, fb)
             return self._synth(text, fb)
+
+    def _synth_xiaomi(self, text: str) -> bytes:
+        """小米 MiMo-TTS 合成（走 provider，MP3 bytes）。
+
+        2026-10-10 实测：英/日/中三种语言都能解出有效音频
+        （en 1523ms / ja 2503ms / zh 1389ms）。
+        """
+        from .providers.tts import get_tts_provider
+        base_url, model, _pk = self._tts_endpoint()
+        key = self.tts_key
+        if not base_url or not key:
+            raise RuntimeError("小米 TTS 未配置 Key")
+        prov = get_tts_provider("xiaomi_tts")
+        req = prov.build(base_url=base_url, key=key, model=model, text=text,
+                         voice=getattr(self, "voice_override", "") or "Mia")
+        client = pooled_client(timeout=30.0)
+        r = client.post(req.url, headers=req.headers, json=req.json_body,
+                        timeout=30.0)
+        r.raise_for_status()
+        return prov.parse(r)
 
     def _synth_cosy(self, text: str, cv_name: str) -> bytes:
         """硅基流动 CosyVoice2 合成（MP3 bytes）。不走 SSML/韵律包装——

@@ -4,6 +4,38 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ValTrans</title>
+    <!--
+      ★ 仅测试钩子（2026-10-10）
+      ---------------------------------------------------------------------------
+      加它是因为要验「v0.3.0 新增的页面渲染对不对」，而**靠坐标点击去切页签
+      极不可靠**：布局一动坐标就失效，失效的表现不是报错，而是
+      「截到了首页却报成通过」—— 比没有测试更糟。
+
+      这里读 URL 上的 query，只在测试启动时由 Python 拼进 url；
+      生产启动不带这个参数，所以两个变量都是 undefined，行为与从前完全一致。
+
+      · __vt_page=settings|live|home|...   初始落在哪个页
+      · __vt_meeting=1                   初始就打开会议向导
+      · __vt_scroll=1200                 初始把主滚动容器滚到 1200px
+          （设置页的 TTS 下拉/划词热键在首屏之下，
+            不滚就截不到 —— 而「截不到」不等于「不存在」）
+    -->
+    <script>
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search);
+          if (q.get('__vt_page')) {
+            window.__VT_TEST_PAGE__ = q.get('__vt_page');
+          }
+          if (q.get('__vt_meeting')) {
+            window.__VT_TEST_OPEN_MEETING__ = true;
+          }
+          if (q.get('__vt_scroll')) {
+            window.__VT_TEST_SCROLL__ = parseInt(q.get('__vt_scroll'), 10) || 0;
+          }
+        } catch (e) { /* 生产环境忽略 */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

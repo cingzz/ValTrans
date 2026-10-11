@@ -51,6 +51,8 @@ import os
 import re
 import threading
 import time
+
+from ..core.atomicio import atomic_write_json
 from pathlib import Path
 
 _LOCK = threading.Lock()
@@ -85,9 +87,12 @@ def _load() -> dict:
 
 def _save(d: dict) -> None:
     try:
-        p = _tm_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        # ★ v0.3.1：改原子写（外部审计 Step-5 P1-5 / MiMo M-3）。
+        #   原来是 p.write_text(...) 直接覆盖：先截断再写，
+        #   关机/断电/磁盘满落在这个窗口里 -> tm.json 剩半截或 0 字节，
+        #   而加载方读不到就当空 -> **整本翻译记忆一夜归零且不报错**。
+        #   原子写法项目里早就有（core/config.py），这里只是收口复用。
+        atomic_write_json(_tm_path(), d, indent=None)
     except Exception:
         pass          # 记忆库写失败绝不能影响翻译
 

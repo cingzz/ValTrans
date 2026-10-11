@@ -173,7 +173,22 @@ input[type="range"]::-webkit-slider-thumb {
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
 .modal {
-  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  /* ★ 弹窗底色必须是**不透明**的（v0.3.0 修）。
+   *
+   * 原来这里是 `var(--card)`，而 tokens.css 里
+   *     --card: var(--glass-card) = rgba(255,255,255,.42)
+   * 只有 42% 白，叠在 `.modal-mask` 的 rgba(22,24,28,.45) 上等于半透明。
+   * 后果不是「不好看」，是**背景页面的字会透进弹窗**——
+   * 会议向导里「还差 4 项」和背后「学会的是你确认过的说法」叠在一起，
+   * 指引用途的弹窗，读错一行就照着做错了。
+   *
+   * 判据是量出来的，不是看出来的：同一块像素在「无弹窗/有弹窗」两张图里
+   * 差了 -51 级。眼睛在缩略图上只会觉得「好像有点灰」。
+   * 玻璃质感靠的是 blur + 高光，不是把底色调成半透明再压一层暗罩。
+   */
+  background: #FBFAF8;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
   width: 620px; max-width: 92vw; max-height: 88vh; overflow-y: auto; padding: 26px 28px;
 }
 .step-dots { display: flex; gap: 6px; }

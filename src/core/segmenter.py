@@ -108,6 +108,10 @@ class Segmenter:
         self._pending = np.zeros(0, dtype=np.float32)   # 变长输入 FIFO
         self._reset()
         self.lock = threading.Lock()
+        # 最近一次 emit 的「段尾静音」时长（秒）——用户已经闭嘴、
+        # 而 VAD 还在等的那段时间。只有断句器知道它：静音关掉的段尾巴
+        # 有这段静音，max_segment_s 强切的段没有，扣多少必须由它自己说。
+        self.last_trailing_silence_s = 0.0
 
     # ---------- 内部状态 ----------
     def _reset(self) -> None:
@@ -186,8 +190,14 @@ class Segmenter:
 
     def _emit(self) -> None:
         seg = np.concatenate(self.cur) if self.cur else np.zeros(0, dtype=np.float32)
+        # ★ 先取再 reset：_reset() 会把 silence_run 清零。
+        #   这段静音的时长必须由断句器报出去 —— 外面的人只能看到一个
+        #   numpy 数组，分不清「尾巴是静音」还是「被 15s 上限硬切的」，
+        #   而这两种情况下延迟口径要扣的时间完全不同（后者不该扣）。
+        trailing = self.silence_run * CHUNK / float(TARGET_SR)
         self._reset()
         if self._vad is not None:
             self._vad.reset()
+        self.last_trailing_silence_s = trailing
         if len(seg) >= TARGET_SR // 4:  # 至少 0.25s
             self.on_segment(seg)

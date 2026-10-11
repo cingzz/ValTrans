@@ -32,7 +32,7 @@ export default function About({ version }) {
         <div className="muted" style={{ marginTop: 10, fontSize: 12.5 }}>
           作者 <b>cingzz</b> ·
           <a href="https://github.com/cingzz" target="_blank" rel="noreferrer"
-             style={{ color: 'var(--accent)' }}> github.com/cingzz</a>
+             style={{ color: 'var(--primary)' }}> github.com/cingzz</a>
           <span style={{ marginLeft: 10 }}>GPL-3.0 + 商业授权</span>
         </div>
       </div>
@@ -80,7 +80,7 @@ export default function About({ version }) {
           在「实时翻译」页点某条消息上的<b>误报</b>，填上正确的说法 ——
           你这台机器立即生效。同一条被 3 个以上不同玩家报成同一句，
           才会进社区词库（<a href="https://github.com/cingzz/valtrans-lexicon"
-          target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+          target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>
             valtrans-lexicon</a>）；说法有分歧时系统不会自动采纳任何一方。
           <br /><br />
 

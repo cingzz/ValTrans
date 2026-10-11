@@ -244,10 +244,12 @@ export default function FeedbackDialog({ onClose }) {
             <div className="muted" style={{ fontSize: 11.5, marginTop: 6,
                                              lineHeight: 1.7 }}>
               {draft.log_files.length
-                ? "完整日志在本机：" + draft.log_dir
+                ? "完整日志在本机：" + (draft.log_dir_full || draft.log_dir)
                 : "没找到日志文件"}
               {draft.log_redacted > 0
                 ? `（已自动隐去 ${draft.log_redacted} 处疑似密钥）` : ""}
+              {draft.log_paths_redacted > 0
+                ? `、${draft.log_paths_redacted} 处本机路径/用户名` : ""}
               {trimmed > 0
                 ? ` · 为控制提交长度，日志已缩到尾部 ${draft.log_tail.length - trimmed} 字符`
                 : ""}

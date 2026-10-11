@@ -746,23 +746,49 @@ class NativeOverlay:
 
     @staticmethod
     def _split_args(s):
+        """按逗号切参数，尊重引号与括号嵌套。
+
+        ★ v0.3.1 修（外部审计 Big Pickle O2 / MiMo 6.6，fuzz 实测 216/3000）
+        --------------------------------------------------------------
+        原来判「引号有没有被转义」写的是：
+
+            if ch == q and cur[-2:] != '\\"':
+                q = None
+
+        它**只往回看 2 个字符**，而转义与否取决于该引号前面**连续反斜杠的奇偶**：
+
+            "...abc\\"     -> 结尾 \\\\ 是一个被转义的反斜杠，这个 " 是**结束引号**
+            "...abc\\\\"   -> 结尾 \\\\\\\\ 是两个反斜杠，这个 " 是**内容**
+
+        `cur[-2:]` 对前者返回 `\\"` 就判定「被转义」—— 于是**结束引号被吞掉**，
+        整段参数从此都算在字符串里，后续参数全部丢失。
+
+        改成数连续反斜杠：奇数 = 转义，偶数 = 没转义。
+        """
         args, depth, cur, q = [], 0, "", None
+        bs = 0          # 引号内连续反斜杠计数（只在 q 非空时有意义）
         for ch in s:
-            if q:
+            if q is not None:
                 cur += ch
-                if ch == q and cur[-2:] != '\\"':
+                if ch == "\\":
+                    bs += 1
+                    continue
+                # 非反斜杠字符：反斜杠串到此为止。
+                # 偶数个 = 没有转义紧挨着 -> 这个引号是真引号
+                if ch == q and bs % 2 == 0:
                     q = None
+                bs = 0
+                continue
+            if ch in ('"', "'"):
+                q = ch; cur += ch; bs = 0
+            elif ch in "{[(":
+                depth += 1; cur += ch
+            elif ch in "}])":
+                depth -= 1; cur += ch
+            elif ch == "," and depth == 0:
+                args.append(cur.strip()); cur = ""
             else:
-                if ch in ('"', "'"):
-                    q = ch; cur += ch
-                elif ch in "{[(":
-                    depth += 1; cur += ch
-                elif ch in "}])":
-                    depth -= 1; cur += ch
-                elif ch == "," and depth == 0:
-                    args.append(cur.strip()); cur = ""
-                else:
-                    cur += ch
+                cur += ch
         if cur.strip():
             args.append(cur.strip())
         return args

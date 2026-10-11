@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+from ..core.atomicio import atomic_write_json
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -120,9 +122,11 @@ def save(data: dict[str, dict[str, str]]) -> int:
     n = 0
     for terms in data.values():
         n += len(terms)
-    REGISTRY.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8")
+    # ★ v0.3.1：原子写。登记表损坏的后果比较阴 —— load() 读不到就当
+    #   「一条都没钉死」，于是所有术语重新放行，表现为
+    #   「之前明明校对过的词，现在又开始乱翻」，且无从查起。
+    atomic_write_json(REGISTRY, data, indent=2, sort_keys=True,
+                      trailing_newline=True)
     # 用刚写出去的内容刷新缓存（不重读文件：省一次 IO，也避免读到自己
     # 还没落完的内容）
     fresh: dict[str, dict[str, str]] = {}

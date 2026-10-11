@@ -4,12 +4,26 @@ import HotkeyInput, { prettyHotkey } from '../HotkeyInput.jsx'
 
 export default function Home({ cfg, patchCfg, running, status, onToggle, toggling,
                                showOriginal, setShowOriginal, ttsEnabled, setTtsEnabled,
-                               streamer, setStreamer, goSettings }) {
+                               streamer, setStreamer, goSettings, openMeeting }) {
   const [latency, setLatency] = useState(null)
   const [voice, setVoice] = useState(cfg.tts_voice || '')
   const [voices, setVoices] = useState([])
   const [previewing, setPreviewing] = useState(false)
   const [pttKey, setPttKey] = useState(cfg.hotkey_ptt || '')
+  // v0.3.1：浮窗**实际可见性**改用本地状态，不再塞进 cfg。
+  //
+  // 为什么必须改（外部审计实测 + 本项目「有≠对」）：
+  // 这个值是 `get_overlay_state` **每轮实时算出来的**（浮窗懒创建，
+  // 配置没变但实际状态会变），Python 侧从不持久化它。
+  // 而之前写法是 `patchCfg({ ...cfg, overlay_visible })` —— 全量回传给
+  // save_cfg，`overlay_visible` 又不在可写白名单里，后端把它过滤掉、
+  // 返回的 cfg 仍是旧值 -> setCfg 还原 -> 下一轮比对依然不一致 ->
+  // **每 2 秒一次全量写盘，无限循环**，直到浮窗销毁。
+  //
+  // 判据（值得记住）：它不报错、不卡顿、界面也「看着正常」，
+  // 只是磁盘被反复重写 —— 这类问题只有去数「实际发生了几次写」
+  // 才看得见，问「该在的东西在不在」永远是绿的。
+  const [overlayVisible, setOverlayVisible] = useState(cfg.overlay_visible === true)
 
   useEffect(() => {
     call('get_voices').then(setVoices).catch(() => {})
@@ -36,16 +50,20 @@ export default function Home({ cfg, patchCfg, running, status, onToggle, togglin
       if (!alive) return
       try {
         const st = await call('get_overlay_state')
-        if (alive && typeof st?.overlay_visible === 'boolean'
-            && st.overlay_visible !== cfg.overlay_visible) {
-          patchCfg({ ...cfg, overlay_visible: st.overlay_visible })
+        // 只写本地状态，绝不回传 save_cfg（理由见上面 overlayVisible 注释）
+        if (alive && typeof st?.overlay_visible === 'boolean') {
+          setOverlayVisible(st.overlay_visible)
         }
       } catch (_) { /* 未就绪时忽略 */ }
     }
     tick()
     const t = setInterval(tick, 2000)
     return () => { alive = false; clearInterval(t) }
-  }, [cfg.overlay_enabled, cfg.overlay_visible])
+  }, [cfg.overlay_enabled])
+
+  // 配置重新下发时（例如切页后 App 重新 get_state），跟一次后端的值，
+  // 否则本地状态会停在上一次会话的旧值上。
+  useEffect(() => { setOverlayVisible(cfg.overlay_visible === true) }, [cfg.overlay_visible])
 
   return (
     <div>
@@ -101,6 +119,18 @@ export default function Home({ cfg, patchCfg, running, status, onToggle, togglin
           <div className="muted" style={{ marginTop: 10 }}>
             识别中会自动暂停朗读，防止回声误触发。
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <h2 className="h2">不只是打游戏</h2>
+          <span className="grow" />
+          <button className="btn primary" onClick={openMeeting}>会议 / 通话同传</button>
+        </div>
+        <div className="muted" style={{ margin: '8px 0 0', lineHeight: 1.8 }}>
+          同一套引擎也能用在 Zoom / 腾讯会议 / Teams 上——对方说外语直接出中文字幕。
+          原理一样，区别只在两端接的东西不同，点上面按钮有分步引导。
         </div>
       </div>
 
@@ -176,7 +206,7 @@ export default function Home({ cfg, patchCfg, running, status, onToggle, togglin
               不能为了迁就状态灯改成常驻窗口；正确做法是**如实显示实际状态**。*/}
           {!cfg.overlay_enabled
             ? <span className="pill gray">字幕已关闭</span>
-            : cfg.overlay_visible === true
+            : overlayVisible
               ? <span className="pill green">字幕显示中 · 可在游戏画面查看</span>
               : <span className="pill orange">已开启 · 等队友说话时自动出现</span>}
           <button className="btn" style={{ flexShrink: 0 }} onClick={() => call('review_overlay').catch(() => {})}>

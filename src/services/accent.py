@@ -122,26 +122,67 @@ GAME_TERMS = set("""
     "one", "two", "three", "four", "five", "someone", "somebody",
 """.split())
 
-# 清洗：上面的 split 是对源码文本切分，会把引号和逗号一起带出来
+# 清洗①：上面的 split 是对源码文本切分，会把引号和逗号一起带出来
 # （实测把 heaven 变成带引号逗号的脏 token，纠错后句子多了 "heaven",）
 GAME_TERMS = {w.strip("\"',;:. ") for w in GAME_TERMS if w.strip("\"',;:. ")}
 
-_ANCHORS = {
-    "spike", "spikes", "flash", "smokes", "smoke", "ult", "orbs", "orb",
-    "plant", "planted", "defuse", "defusing", "defused",
-    "rotate", "rotating", "peek", "peeking", "trade", "flank",
-    "heaven", "hell", "mid", "midway", "recon", "drone", "trap",
-    "clutch", "boost", "boosting", "ninja", "stack", "lurk",
-    "rush", "contact", "default", "retake", "eco", "nade", "molly",
-    "gun", "vandal", "phantom", "operator", "guardian", "sheriff",
-    "judge", "bucky", "odin", "ares", "spectre", "stinger", "bulldog",
-    "cyber", "cypher", "sage", "killjoy", "brimstone", "viper",
-    "omen", "astra", "harbor", "neon", "jett", "raze", "reyna", "sova",
-    "breach", "skye", "fade", "gekko", "yoru", "phoenix", "chamber",
-    "main", "long", "short", "link", "top", "bottom", "anchor", "tree",
-    "garage", "hut", "tunnel", "boathouse", "heaven", "dish",
-}
-# 锚点统一用显式游戏词表（比手工维护可靠）
+# 清洗②：注释也被 split 吃进来了（v0.3.1 外部审计后补）
+# ------------------------------------------------------------
+# 上面那个三引号块里有整段分节注释，`.split()` 不认注释，
+# 于是这些 token 也进了词表：
+#     "#"   "---"   "/"        <- 来自 `# --- 爆能器（最高频...）---`
+#     "GAME_TERMS"             <- 来自下面这句注释**自己**：
+#                                 「且不在 GAME_TERMS 里导致漏纠」
+#
+# 最后一个尤其值得记：**用来解释这张表的注释，被这张表吃掉了**。
+# 这和本项目已经记过的「判据匹配到自己刚写的说明注释」是同一种失效，
+# 只是这次发生在**数据**里而不是判据里，所以更难发现 ——
+# 词表多几个词不会报错，也不会有任何测试变红。
+#
+# 实际害处：`_ANCHORS = set(GAME_TERMS)`（见下）。
+# `#` 和 `/` 在英文句子里太常见了，一旦成为「游戏语境锚点」，
+# 任何含斜杠的句子都会被当成游戏话 —— 纠错模块会去纠它。
+#
+# 判据：只要求「ASCII 小写字母」。真游戏词全是这种形态；
+# 而 `GAME_TERMS` 因为是大写，被这条规则**顺带**挡掉。
+# 这个「顺带」不是巧合，是这条判据的好处：它不特判那 4 个垃圾，
+# 而是把「不是小写英文词」的一律拒收，以后加注释也不怕再被吃。
+GAME_TERMS = {w for w in GAME_TERMS
+              if w.isascii() and w.isalpha() and w.islower()}
+
+# 清洗③：补回被 `.split()` 方案**漏掉**的真游戏词
+# ------------------------------------------------------------
+# 手工锚点表（已删，见下）里有 7 个词没进 GAME_TERMS 清单，
+# 而 `_ANCHORS = set(GAME_TERMS)` 又把手工表整个盖掉了 ——
+# 净结果就是这 7 个词**从锚点表里消失了**。
+# 比对脚本：tests/_dedupe_tables.py（会量出「手工表独有」的差集）。
+#     jett    真英雄名，且表里写的是 "jet"/"jets"（ASR 听错的形态）
+#     gun     "drop gun" 高频
+#     orbs / smokes / spikes   只写了单数，复数形式漏了
+#     dish    Sunset 地图片点
+#     cyber   不是真英雄名（疑似 cypher 的 ASR 误写），但保留无害
+# 补回**词表**而不是补回那张手工表 —— 单一来源，免得两份又对不上。
+GAME_TERMS |= {"jett", "gun", "orbs", "smokes", "spikes", "cyber", "dish"}
+
+# ---------------------------------------------------------------------------
+# 锚点表：**单一来源** = GAME_TERMS
+# ---------------------------------------------------------------------------
+# ★ v0.3.1：原在这里有一张 86 词的手工锚点表（`_ANCHORS = { ... }`），
+#   已删除（外部审计 Step-5 的重复定义扫描命中）。
+#
+#   它从来没生效过：紧跟着的一行 `_ANCHORS = set(GAME_TERMS)` 把它整个盖掉，
+#   而且后一行**没有引用 _ANCHORS 自己**，所以不是「加工」而是「替换」——
+#   手工表是 100% 死代码。
+#
+#   覆盖是作者有意为之（原注释：「锚点统一用显式游戏词表，比手工维护可靠」），
+#   方向也对（86 词 -> 200+ 词）。但覆盖时**漏了 7 个手工表独有的词**，
+#   同时 `.split()` 把注释切进了词表（`#` / `---` / `/` / `GAME_TERMS`）。
+#   两处都已在上面「清洗②③」修正，所以现在删这张表是安全的。
+#
+#   为什么必须删而不是留着「以备参考」：
+#   留着的害处是它**看起来像权威定义**。下一个人会照它改词，
+#   改完却发现 `_ANCHORS` 行为没变 —— 因为他改的是一份没人读的表。
+#   这正是本项目反复记的「有≠对」：有表 ≠ 表在用。
 _ANCHORS = set(GAME_TERMS)
 
 

@@ -137,6 +137,11 @@ ASR_PRESETS = {
         "base_url": "https://api.siliconflow.cn/v1",
         "model": "Qwen/Qwen3-ASR-1.7B",
         "price": "免费",
+        # ★ v0.3.1：新增 acc = 实测准确率，给 UI 直接标注。
+        #   数字出处：providers/base.py:29-33 的 2026-10-10 实测
+        #   （8 个带真值样本，中/粤/英/日/韩）。没有实测的档**不填** ——
+        #   填一个没跑过的数字，等于对用户做没有依据的承诺（同 languages 的原则）。
+        "acc": "0.926 · 达标 4/8",
         "languages": ["zh", "en", "ja", "ko", "yue"],
         # 实测 language 参数被接受但**不影响输出**（ja/zh/en 三种都返回同一句
         # 正确日语），说明它走自动检测。所以这里置 True，
@@ -155,6 +160,12 @@ ASR_PRESETS = {
         "label": "Groq whisper-large-v3（全语言·自动检测）",
         "base_url": "https://api.groq.com/openai/v1",
         "model": "whisper-large-v3-turbo",
+        # ★ 2026-10-11 官方核价（console.groq.com/docs/model/whisper-large-v3-turbo）：
+        #   $0.04/小时；免费档每天 2000 次请求（一局 = 1 次请求，个人够用）。
+        "price": "免费档每天 2000 次；付费 $0.04 / 小时（一局约 ¥0.14）",
+        # ★ 但**国内网络实测不通**：api.groq.com 返回 403，换 Key 无解
+        #   （见上方注释 L131-134）。不标这条，用户会选一个用不了的档。
+        "note": "⚠ 国内网络实测 403 被挡，换 Key 无解；海外网络可用。",
         "languages": ["zh", "en", "ja", "ko"],
         "auto_detect": True,
     },
@@ -162,6 +173,11 @@ ASR_PRESETS = {
         "label": "OpenAI whisper-1（全语言·自动检测）",
         "base_url": "https://api.openai.com/v1",
         "model": "whisper-1",
+        # ★ 2026-10-11 官方核价：$0.006 / 分钟（= $0.0001/秒）。
+        #   一局约 30 分钟 → $0.18 ≈ ¥1.3，是阿里千问（¥0.026）的约 50 倍。
+        #   实测 api.openai.com 直连超时（同上 L131-134）。
+        "price": "$0.006 / 分钟（一局约 ¥1.3）",
+        "note": "⚠ 国内直连实测超时；比阿里千问贵约 50 倍。",
         "languages": ["zh", "en", "ja", "ko"],
         "auto_detect": True,
     },
@@ -172,6 +188,66 @@ ASR_PRESETS = {
         "languages": ["zh", "en", "ja", "ko"],
         "auto_detect": True,
     },
+    # —— v0.3.0 新增：阿里千问（2026-10-10 实测，8 个带真值样本）——
+    #   均分 0.997 / 达标 8/8，对比现有硅基基线 0.926 / 4/8。
+    #   差距集中在**韩语**：硅基 0.848（把 적이 听成 저이），
+    #   而韩语是外服 VALORANT 的核心场景。粤语硅基 0.750（繁体打龍→简体打龙）。
+    #   代价 ¥0.00022/秒，一局约 ¥0.026。
+    #
+    # ★ 两个预设是**同一个模型的两条通路**，不是两个服务商：
+    #   aliyun_qwen       OpenAI 兼容端点，形同其他家，接入最省事
+    #   aliyun_dashscope  DashScope 原生端点 —— **唯一能带术语的通路**
+    #     实测：兼容端点带 system 消息会被 400 拒掉
+    #       InternalError.Algo.InvalidParameter: The dedicated task `asr`
+    #         ... does not support this input
+    #   所以默认给 aliyun_qwen；需要注入游戏术语时才选 dashscope，
+    #   且注意**实测带术语反而掉分**（0.997→0.966，粤语 1.000→0.750），
+    #   所以术语开关默认关闭。
+    #
+    # ★ base_url 用旧的 dashscope.aliyuncs.com：没有 WorkspaceId 时
+    #   只能用旧的，文档明写「现有域名仍可正常使用」。
+    "aliyun_qwen": {
+        # ★ label 里的价格已移到 price 字段 —— 原来 label 和 price
+        #   都写着 ¥0.00022，同一个数在两处维护，改一处漏一处就是错的。
+        # ★ 不写「推荐」：硅基那档（免费默认）已经占了「推荐」，
+        #   同一个下拉里两个「推荐」等于都没有。这里按场景写清楚差异点。
+        "label": "阿里千问 qwen3-asr-flash（韩语最准·外服首选）",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen3-asr-flash",
+        "price": "¥0.00022 / 秒（一局约 ¥0.026）",
+        "acc": "0.997 · 达标 8/8",
+        # ★ 只列项目**已授权**的 5 种，不照抄服务商支持的 30 种。
+        #   用户明确决定过：白名单外的三种小众语种「玩的人很少，
+        #   一般匹配不到，把与他们相关的全部删掉」，保留 zh(含粤语)/en/ja/ko。
+        #   千问确实支持更多语种，但那属于「服务商能做」而不是
+        #   「本项目承诺做」—— 列出来等于对用户做了没有对应词库、
+        #   也没有实测的承诺。
+        #   verify_src.py 的 ALLOWED_LANGS 守护会拦着
+        #   （它连**注释里提到**那些语种都判红，所以这里也不能点名）。
+        "languages": ["zh", "yue", "en", "ja", "ko"],
+        "auto_detect": False,     # 支持显式指定语种，实测能提升准确率
+        "key_group": "aliyun",    # 与 aliyun_dashscope 共用一把 Key
+    },
+    "aliyun_dashscope": {
+        "label": "阿里千问·原生端点（唯一支持术语注入·默认不注入）",
+        "base_url": "https://dashscope.aliyuncs.com/api/v1",
+        "model": "qwen3-asr-flash",
+        "price": "¥0.00022 / 秒（一局约 ¥0.026）",
+        # 同一个模型的另一条通路，准确率相同；但**一旦开术语注入就掉分**
+        # （实测 0.997→0.966，粤语 1.000→0.750），所以标注的是不开术语的值。
+        "acc": "0.997 · 达标 8/8",
+        "languages": ["zh", "yue", "en", "ja", "ko"],
+        "auto_detect": False,
+        "key_group": "aliyun",    # ★ 不加这条，用户得把同一把 Key 贴两遍
+    },
+    # ★ 故意**不注册**小米 ASR（代码在 services/providers/asr_chat_audio.py
+    #   里保留了 XiaomiMiMoASR，但这里不放进预设表）：
+    #     · 接口只声明 language 支持 auto/zh/en，没有日韩
+    #     · 实测 auto 自动识别同样不行：ko 0.286、ja 0.858
+    #       （적 미드에서 → 절기 비대에서；ラッシュ→拉致、ミッド→密土）
+    #     · V2.5 系列 2026-10-21 下线
+    #   放进预设表 = 给用户一个必然出错的选项。有代码但不给选，
+    #   比没有更危险（用户会以为「可以选」）。
 }
 
 # 翻译服务商预设（OpenAI 兼容 /chat/completions）
@@ -185,7 +261,15 @@ ASR_PRESETS = {
 #   Hunyuan-MT-7B       3547ms   12685ms     2/10      174     免费
 #
 # 社区语言对比（这是选 Qwen 的真正理由，不是速度也不是钱）：
-#   they planted spike on A
+#
+#   ★ 2026-10-11 补记：下面这段对比的是 **Qwen vs Hunyuan-MT-7B**。
+#     后来接入的 hy-mt2-pro 不在这组对比里，而 mt_eval_3way 的同批 10 句
+#     实测它是 0.581 > Qwen 0.422 > Hunyuan-7B 0.362 ——
+#     所以「Qwen 社区语言最准」这句话**只在它俩之间成立**，
+#     现在选 Qwen 的理由是「更快、且一样不泄漏解释」，不是「最准」。
+#     判据见下方 acc 字段（三方同批样本，可横向比）。
+#
+# they planted spike on A
 #     Hunyuan  他们在A点放置了尖刺装置       ← 书面语 + 错译
 #     Qwen     A包被种了                     ← 社区话
 #   spike dropped mid
@@ -197,18 +281,31 @@ ASR_PRESETS = {
 # 不要因为换模型就放松本地术语表的扩充。
 MT_PRESETS = {
     "qwen": {
-        "label": "千问 Qwen2.5-14B（推荐·社区语言最准）",
+        # ★ v0.3.1：原标签是「推荐·社区语言最准」。前半句还成立（它是默认档），
+        #   后半句已被自己的实测推翻 —— mt_eval_3way 同批 10 句里它是**第 2**
+        #   （0.422，输给 hy-mt2-pro 的 0.581），而它比第 1 名便宜、还更快。
+        #   既然便宜和更快都是真的，就照实说便宜和更快，
+        #   不留一句数据已经不支持的「最准」。
+        "label": "千问 Qwen2.5-14B（延迟更低·零解释泄漏）",
         "price": "¥1.26 / M tokens",
+        # ★ v0.3.1：acc 来自 tests/mt_eval_3way.py（10 句带参考译文，同一批样本），
+        #   三方横向可比 —— 见 tencent_hunyuan 下的对照表。
+        "acc": "0.422 · 3 方第 2 · 387ms",
         "base_url": "https://api.siliconflow.cn/v1",
         "model": "LoRA/Qwen/Qwen2.5-14B-Instruct",
-        "note": "实测 615ms / 零解释泄漏。唯一短板：偶发术语误解，靠本地表兜。",
+        # ★ 延迟只在 acc 里报一次（三方同批样本，可横向比）。
+        #   原先 note 写 615ms、acc 写 387ms —— 同一个预设两个延迟，
+        #   用户没法判断该信哪个。定性的（不泄漏解释、术语靠本地表）留在这里。
+        "note": "零解释泄漏。唯一短板：偶发术语误解，靠本地表兜。",
     },
     "siliconflow": {
         "label": "Hunyuan-MT-7B（免费档）",
         "price": "免费",
+        "acc": "0.362 · 3 方第 3 · 599ms",
         "base_url": "https://api.siliconflow.cn/v1",
         "model": "tencent/Hunyuan-MT-7B",
-        "note": "输入/输出均免费。但实测 3547ms、2/10 解释泄漏、「尖刺装置」式书面语。",
+        # 延迟同理只在 acc 里报（原先 note 写 3547ms、acc 写 599ms，两处打架）。
+        "note": "输入/输出均免费。但 2/10 解释泄漏、「尖刺装置」式书面语。",
     },
     "zhipu": {
         "label": "智谱 GLM-4-Flash（免费·仅故障兜底）",
@@ -217,11 +314,101 @@ MT_PRESETS = {
         "model": "glm-4-flash",
         "note": "需单独配智谱 Key。默认不启用。",
     },
+    # —— v0.3.0 新增：腾讯混元（TokenHub）——
+    # ★ 旧混元平台 2026-06-30 停止售卖、**2026-09-30 全面停服下线**，
+    #   现在只能开 TokenHub：https://cloud.tencent.com/product/tokenhub
+    #   TokenHub 兼容 OpenAI 协议，所以这个预设就是标准 ChatMT。
+    #   计费 ¥1.2 / ¥3.6 每百万 token（输入/输出），新用户有免费额度。
+    #   ⚠️ 待确认：Key 格式。资料两种说法 —— 一处说 TokenHub 专用
+    #      API Key，另一处说 `{secret_id}:{secret_key}`。照控制台实际
+    #      给的来，别照博客。
+    "tencent_hunyuan": {
+        "label": "腾讯混元 Hy-MT2-Pro（游戏黑话最准·准确率第 1）",
+        # ★ 2026-10-10 三方实测（tests/mt_eval_3way.py，10 句带参考译文）
+        #     链路                均分    通过   均延迟
+        #     腾讯 hy-mt2-pro     0.581   3/10   750ms   ← 本项
+        #     硅基 Qwen2.5-14B    0.422   2/10   387ms   ← 现有默认
+        #     硅基 Hunyuan-MT-7B  0.362   1/10   599ms
+        #
+        #   质量比现有默认高 37%，但延迟接近两倍且要花钱。
+        #   → 列为**可选档**而非默认：实时字幕对延迟敏感，
+        #     而「说人话不说书面语」是用户定的最高优先级 ——
+        #     愿意为质量付延迟的人自己切。
+        #
+        #   具体差距看两例：
+        #     ko1 「敌人在中路绕回来」  腾讯 83%（译成「男爵」的对应中文）
+        #                               Qwen 33%
+        #     yue1「别送，稳住发育」    腾讯 88%   Qwen 75%
+        #   但 yue2 腾讯 58% 反而输给 Qwen 92% —— 不是全面领先。
+        #
+        #   ★ 域名务必核对：tokenhub.tencentmaas.com
+        #     差一个 cloud 的那个（tencentcloudmaas）会返回
+        #     401「API Key 不存在或签名校验失败」，而报错**不提示**是域名问题。
+        "price": "¥0.5 / ¥2 每百万 tokens（一局约 ¥0.001）",
+        "acc": "0.581 · 3 方第 1 · 750ms",
+        "base_url": "https://tokenhub.tencentmaas.com/v1",
+        "model": "hy-mt2-pro",
+        "note": "翻译专用模型，游戏黑话用词明显优于通用对话模型。"
+                "实测 0.581 vs 千问 0.422，但慢 363ms。"
+                "需要 TokenHub 的单个 API Key（sk- 开头）。",
+    },
 }
 
 # 默认走 Qwen（v0.2.5 起）。旧配置里的 "siliconflow" 仍然有效，
 # 不强制改写用户的 mt_preset —— 用户想用免费档就让他用。
 DEFAULT_MT_PRESET = "qwen"
+
+# TTS 服务商预设
+# ---------------------------------------------------------------------------
+# 默认仍是 edge-tts 本地链（不依赖云、零延迟、零成本），
+# 云端音色是**可选增强** —— 这条不能变：把默认换成云端等于让所有用户
+# 的每次 PTT 都多付一次网络往返，而本地链本来就好用。
+# ---------------------------------------------------------------------------
+TTS_PRESETS = {
+    "local": {
+        "label": "本地音色（edge-tts·免费·无延迟）",
+        "price": "免费",
+        "base_url": "",
+        "model": "",
+        "provider": "siliconflow_cosy",   # 占位：本地链不走 provider
+        "note": "默认档。微软的在线音色接口，通过本机通道返回，"
+                "不占用你的云端额度。",
+    },
+    "siliconflow_cosy": {
+        "label": "硅基 CosyVoice2（自然音色）",
+        # ★ 2026-10-11 修正：原来写「随 ASR 额度」——**错的**。
+        #   CosyVoice 是 TTS，按字符计费，跟 ASR（按秒）不是一个账。
+        #   官方 siliconflow.cn/pricing 实测：¥0.05 / 千字符 UTF-8
+        #   （国际站 $7.15 / M UTF-8 bytes，同一价格的两种表述）。
+        "price": "¥0.05 / 千字符",
+        # ★ 这三个字段别删：tts_endpoint()/tts_key() 靠 provider 判定走哪条链
+        "base_url": "https://api.siliconflow.cn/v1",
+        "model": "FunAudioLLM/CosyVoice2-0.5B",
+        "provider": "siliconflow_cosy",
+        "note": "音色自然、语气丰富。失败自动回落到本地链。",
+    },
+    "xiaomi_tts": {
+        # —— v0.3.0 新增：小米 MiMo-TTS（2026-10-10 实测）——
+        #   en 1523ms / ja 2503ms / zh 1389ms，三种语言全部能解码出有效音频。
+        #   ⚠️ 明显比本地链慢（本地链几乎无延迟），所以只做可选档。
+        #   ⚠️ 这一路**没有 speed 参数**（文档里没有），语速滑杆对它不生效。
+        #   ⚠️ V2.5 系列 2026-10-21 下线，接入前确认型号还有效。
+        "label": "小米 MiMo-TTS（三种语言都可用·较慢）",
+        "price": "限时免费",
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "model": "mimo-v2.5-tts",
+        "provider": "xiaomi_tts",
+        "key_group": "xiaomi",
+        "note": "实测英/日/中都能合成。音色 Mia/Chloe/Milo/Dean。"
+                "比本地链慢 1~2 秒；没有语速参数。"
+                # ★ 时效风险必须标出来：用户选了它，2026-10-21 之后就用不了，
+                #   而那时**没有 v2.6-tts 可换**（实测小米 /models 的 TTS 型号
+                #   全是 V2.5 系列，V2.6 只有对话模型）。不写在眼前等于埋雷。
+                "　⚠ V2.5 系列 2026-10-21 下线，届时需换型号。",
+    },
+}
+
+DEFAULT_TTS_PRESET = "local"
 
 LANGUAGE_NAMES = {
     "zh": "中文", "en": "英语", "ja": "日语", "ko": "韩语",
@@ -282,6 +469,16 @@ class AppConfig:
     show_speaker: bool = True
     fade_seconds: float = 8.0
 
+    # ★ v0.3.0 补：浮窗**实际**可见性（区别于 overlay_enabled 那个用户开关）。
+    #   之前前端 Styles.jsx / Home.jsx 一直在读 cfg.overlay_visible、
+    #   还 patchCfg 写回配置，但 AppConfig **里没有这个字段** ——
+    #   值落到 config.json，load() 时被丢掉，再也读不回来。
+    #   后果：当前会话里「字样风格」页看得到真实状态，
+    #   **一重启就归零**，永远显示成「没显示」。
+    #   写它的 Python 侧（api.py 的 _overlay_cfg_payload）一直是好的，
+    #   坏的是「读回来」这一段 —— 半截接线最难自己看出来。
+    overlay_visible: bool = False
+
     # 朗读 / 模式
     tts_enabled: bool = True
     tts_voice: str = ""                  # 空=按语言自动（多语人声）
@@ -296,6 +493,19 @@ class AppConfig:
     hotkey_review: str = "<ctrl>+<alt>+h"
     hotkey_ptt: str = "<ctrl>+<alt>+s"
     hotkey_move: str = "<ctrl>+<shift>+d"   # 切换浮窗「固定/可拖动」
+    # v0.3.0：划词翻译。在**任何程序**里选中文字后按这个键即可，
+    #   不需要本软件在前台。默认 <ctrl>+<alt>+t 而不是 Alt+T ——
+    #   Alt+T 会和大量软件的「新建标签页/新建窗口」撞车，
+    #   ctrl+alt+t 极少被占用。
+    hotkey_select: str = "<ctrl>+<alt>+t"
+    # v0.3.0：划词翻译的目标语言。auto = 原文已是中文则翻成英文（发给队友），
+    #   否则翻成中文（主方向）。
+    select_target: str = "auto"
+    # v0.3.0：云端 TTS 选择。默认 local（edge-tts 本地链）——
+    #   不改成云端是刻意的：云端每次 PTT 多一次网络往返，
+    #   而本地链本来就好用。
+    tts_preset: str = "local"
+    tts_keys: dict = field(default_factory=dict)
 
     # 其他
     first_run_done: bool = False
@@ -327,6 +537,11 @@ class AppConfig:
         # Key 解密（v0.2.16）：明文旧配置原样通过，密文信封解开
         cfg.asr_keys = _decrypt_keys(cfg.asr_keys)
         cfg.mt_keys = _decrypt_keys(cfg.mt_keys)
+        # ★ v0.3.0：tts_keys 走同一套 DPAPI 信封。
+        #   漏掉这一行的话，新加的 TTS Key 会**明文落盘** ——
+        #   而本项目的硬规矩是「凭据绝不进版本库 / 不落明文」。
+        #   表现上看不出异常（功能正常），只有翻配置文件才发现。
+        cfg.tts_keys = _decrypt_keys(getattr(cfg, "tts_keys", {}) or {})
 
         # v0.2.5：老配置的 mt_preset=="siliconflow" 升级为 "qwen"，
         # 并把 Key 复制到 qwen 名下。只改这两个字段，不碰其它任何配置。
@@ -347,6 +562,9 @@ class AppConfig:
                 d = asdict(self)
                 d["asr_keys"] = _encrypt_keys(self.asr_keys)
                 d["mt_keys"] = _encrypt_keys(self.mt_keys)
+                # ★ v0.3.0：TTS Key 同样加密（配对 load() 里那行）
+                d["tts_keys"] = _encrypt_keys(
+                    getattr(self, "tts_keys", {}) or {})
                 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
                 tmp = CONFIG_FILE.with_name("config.json.tmp")
                 tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2),
@@ -398,6 +616,17 @@ class AppConfig:
             return k
         if self.asr_preset == "custom":
             return ""
+        # ★ v0.3.0：key_group 回落。
+        #   同一家服务商的**两条通路**（阿里千问的兼容端点与 DashScope
+        #   原生端点）base_url 不同，按 base_url 回落会漏掉它们，
+        #   于是用户切到 dashscope 预设就拿到空串 → **ASR 静默失效**，
+        #   界面表现只是「识别不出」，不报任何错（与本函数注释里
+        #   记的那次 siliconflow/sensevoice 事故完全同型）。
+        grp = ASR_PRESETS.get(self.asr_preset, {}).get("key_group", "")
+        if grp:
+            for name, val in (self.asr_keys or {}).items():
+                if val and ASR_PRESETS.get(name, {}).get("key_group") == grp:
+                    return val
         base = ASR_PRESETS.get(self.asr_preset, {}).get("base_url", "")
         for name, val in (self.asr_keys or {}).items():
             if not val:
@@ -412,6 +641,40 @@ class AppConfig:
             return self.custom_mt_url, self.custom_mt_model
         p = MT_PRESETS.get(self.mt_preset, MT_PRESETS[DEFAULT_MT_PRESET])
         return p["base_url"], p["model"]
+
+    # ---------- TTS ----------
+    def tts_endpoint(self) -> tuple[str, str, str]:
+        """返回 (base_url, model, provider_key)。
+
+        `local` 档返回空 base_url —— 调用方据此走本地 edge-tts 链，
+        不发任何网络请求。
+        """
+        name = getattr(self, "tts_preset", DEFAULT_TTS_PRESET)
+        p = TTS_PRESETS.get(name)
+        if p is None:
+            p = TTS_PRESETS[DEFAULT_TTS_PRESET]
+        return p["base_url"], p["model"], p["provider"]
+
+    def tts_key(self) -> str:
+        """取当前 TTS 档的 Key。
+
+        `local` 档返回空串 —— 本地链不需要 Key。
+        其余档先按预设名取，再按 `key_group` 回落（同 asr_key 的理由：
+        同一家服务商的多个档位共用一把 Key，切过去不该拿到空串）。
+        """
+        name = getattr(self, "tts_preset", DEFAULT_TTS_PRESET)
+        if name == "local":
+            return ""
+        keys = getattr(self, "tts_keys", {}) or {}
+        k = keys.get(name, "")
+        if k:
+            return k
+        grp = TTS_PRESETS.get(name, {}).get("key_group", "")
+        if grp:
+            for other, val in keys.items():
+                if val and TTS_PRESETS.get(other, {}).get("key_group") == grp:
+                    return val
+        return ""
 
     def mt_key(self) -> str:
         """取当前预设的 Key。

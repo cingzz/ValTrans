@@ -23,6 +23,7 @@ import numpy as np
 
 from ..core.security import safe_client, pooled_client
 from ..core.config import AppConfig, ASR_PRESETS, MT_PRESETS
+from .providers import (get_asr_provider, get_mt_provider, terms_for)
 from .game_terms import match_english_terms, build_prompt_glossary
 from .local_rules import translate_local
 from .cjk_slang import translate_cjk, detect_lang, scrub_residual_cjk
@@ -59,6 +60,36 @@ def float32_to_wav_bytes(pcm: np.ndarray, sr: int = 16000) -> bytes:
     return buf.getvalue()
 
 
+def _is_permanent_error(e: Exception) -> bool:
+    """4xx（除 408/429）= 重试也不会好的错：Key 无效(401)、音频超大(413)、
+    参数错(422)。对它们重试只会白烧 8+22+22 秒，还把单 worker 队列堵死。
+
+    ★ v0.3.0：原来它是 `Translator` 的一个 staticmethod，
+      而**调用方在 `CloudASR`** —— `self._is_permanent(e)`。
+      两个类各有一半，谁也没接上：
+
+          CloudASR   行  87-372   第 260 行调用 → 类里没有
+          Translator 行 415-827   第 498 行定义 → 那儿根本没人调
+
+      后果不是「某条冷路径失效」，而是 **ASR 每失败一次就炸一次**：
+      第 260 行在 `except` 里，任何网络错误/超时/4xx 都会走到，
+      于是本该「4xx 立即失败、不再重试」的逻辑，
+      变成抛一个 `AttributeError: 'CloudASR' object has no attribute
+      '_is_permanent'` —— 用户看到的是完全不相干的内部错误。
+
+      为什么一直没被发现：成功路径根本不碰这一行；
+      而 v0.2.16 留下的那条测试只断言
+      `'_is_permanent' in engine.py` —— **字符串确实在里面**，
+      只是在另一个类里。又是「该在的东西在」而不是「接没接上」。
+
+    → 提到模块级：两个类都能用，也不可能再放错类。
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        return 400 <= code < 500 and code not in (408, 429)
+    return False
+
+
 def _apply_glossary(text: str, target: str = "zh") -> str:
     """按翻译方向生成术语提示。
 
@@ -88,9 +119,19 @@ class CloudASR:
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
-        self.cache: dict[tuple[str, str], str] = {}
+        # ★ v0.3.0：缓存值从 str 变成 (文本, 服务商回传语种)。
+        #   键也从 tuple[str, str] 改成 str（原来只有内容摘要在用）。
+        #   为什么一起缓存语种：否则缓存命中返回空语种、现算的返回真语种，
+        #   **同一句话两次得到不同的 lang_hint** —— 靠调用方猜是不行的。
+        self.cache: dict[str, tuple[str, str]] = {}
         self.last_latency = 0.0
         self.used_fallback = False
+        # ★ v0.3.0：服务商回传的附加信息。旧实现拿不到（那几家不返回），
+        #   现在千问/小米会在 annotations 里给 —— 浮窗上色要用。
+        #   默认空串而不是 None：上层拼字符串时不必到处判空。
+        self.last_language = ""
+        self.last_emotion = ""
+        self.last_audio_seconds = 0.0
 
     def _post(self, base_url: str, key: str, model: str, wav: bytes,
               language: str | None, timeout: float = 25.0) -> str:
@@ -132,6 +173,47 @@ class CloudASR:
         j = r.json()
         return (j.get("text") or "").strip()
 
+    def _post_via(self, base_url: str, key: str, model: str, wav: bytes,
+                  language: str | None, timeout: float,
+                  *, terms: str | None = None) -> str:
+        """v0.3.0：走 provider 抽象层发一次识别请求。
+
+        ★ 为什么和 `_post` 并存而不是直接替换
+        -------------------------------------
+        `_post` 是 0.2.22 已上线验证过的实现，它的**请求逐字段**被
+        `tests/test_providers.py` 钉住（build() 与它逐字段比对）。
+        保留原函数作为「参照实现」，迁移正确性才有可对照的东西；
+        等 0.3.0 发版稳定后可以把 `_post` 删掉。
+
+        ★ 行为必须与 `_post` 一致
+        ------------------------
+        硅基那一档 `terms_default=True`，`terms_for()` 会自动补上
+        那段硬编码术语串 —— 所以行为等价。而 chat_audio 那一族
+        默认不带术语（实测带术语掉分：0.997→0.966）。
+        """
+        provider = get_asr_provider(self.cfg.asr_preset)
+        req = provider.build(
+            base_url=base_url, key=key, model=model, wav=wav,
+            mime="audio/wav", language=language,
+            terms=terms_for(provider, terms))
+        client = pooled_client(timeout=30.0)
+        kw = {"headers": req.headers, "timeout": timeout}
+        if req.json_body is not None:
+            kw["json"] = req.json_body
+        else:
+            kw["data"] = req.data
+            kw["files"] = req.files
+        r = client.post(req.url, **kw)
+        r.raise_for_status()
+        res = provider.parse(r.json())
+        # ★ 顺手把服务商回传的语种/情感留下来。旧实现直接丢掉，
+        #   而千问、小米都会在 annotations 里给 —— 这是白捡的信息，
+        #   浮窗上色（区分「在喊」还是「在疑惑」）要用。
+        self.last_language = res.language
+        self.last_emotion = res.emotion
+        self.last_audio_seconds = res.audio_seconds
+        return res.text
+
     # ★ v0.2.13：ASR 的「快失败 + 升级重试」节奏
     #
     # 实测（2026-10-04，用户实测「翻译巨慢」）：
@@ -165,7 +247,7 @@ class CloudASR:
         # 跨进程不一致，且理论上存在碰撞导致「A 的音频返回 B 的文本」的风险。
         cache_key = hashlib.blake2b(wav, digest_size=16).hexdigest()
         if cache_key in self.cache:
-            return self.cache[cache_key], ""
+            return self.cache[cache_key]
 
         base_url, model, langs, auto = self.cfg.asr_endpoint()
         key = self.cfg.asr_key()
@@ -179,13 +261,22 @@ class CloudASR:
         text = None
         last_exc = None
         permanent = False
+        # ★ v0.3.0：兜底模型**只在硅基那套 base_url 上用**。
+        #   _FALLBACK_MODEL 是 `FunAudioLLM/SenseVoiceSmall`，是硅基的
+        #   模型 id；发给别家只会得到 404 或 400，白白多等一个超时。
+        #   上一版没有这道判断，是因为那时只有硅基一家能用 —— 加了
+        #   千问之后继续无条件兜底，等于给每条失败字幕白加 22 秒。
+        use_fb = (self._FALLBACK_MODEL
+                  and self._FALLBACK_MODEL != model
+                  and "siliconflow" in (base_url or ""))
         # 计划 = [(超时, 模型)]：先用主模型递增超时，全挂再换旧模型兜底。
         # 换模型而不是换 Key：用户只有硅基一把 Key，而它同时挂着两个 ASR 模型
         # （实测 Qwen3-ASR-1.7B 快 10.8 倍，旧默认 SenseVoice 留着当保险）。
         # —— 第 1 段：主模型，超时递增重试（最多 len(_ATTEMPTS) 次）——
         for i, to in enumerate(self._ATTEMPTS):
             try:
-                text = self._post(base_url, key, model, wav, language, timeout=to)
+                text = self._post_via(base_url, key, model, wav, language,
+                                      timeout=to)
                 dt = time.perf_counter() - t0
                 if i and _log.isEnabledFor(logging.INFO):
                     _log.info("ASR 重试第 %d 次才成功，累计 %.2fs", i + 1, dt)
@@ -196,7 +287,7 @@ class CloudASR:
                              i + 1, to, type(e).__name__)
                 # ★ v0.2.16：401/413/422 这类 4xx 重试也不会好，直接失败，
                 #   别把单 worker 队列堵 52 秒
-                if self._is_permanent(e):
+                if _is_permanent_error(e):
                     permanent = True
                     break
         # —— 第 2 段：换**模型**兜底（不是换 Key）——
@@ -204,13 +295,12 @@ class CloudASR:
         # 实测 Qwen3-ASR-1.7B 快 10.8 倍，SenseVoice 更准一点但慢 10 倍，
         # 留作保险。这一段固定只发 1 次请求。
         # 4xx 换模型也没用（同一把 Key、同一份音频），跳过。
-        if (text is None and not permanent
-                and self._FALLBACK_MODEL and self._FALLBACK_MODEL != model):
+        if text is None and not permanent and use_fb:
             try:
                 _fb = self._FALLBACK_MODEL.split("/")[-1]
                 _log.warning("主 ASR 模型全挂，换 %s 重试一次", _fb)
-                text = self._post(base_url, key, self._FALLBACK_MODEL, wav,
-                                  language, timeout=self._ATTEMPTS[-1])
+                text = self._post_via(base_url, key, self._FALLBACK_MODEL, wav,
+                                      language, timeout=self._ATTEMPTS[-1])
             except Exception as e:
                 last_exc = e
         self.last_latency = time.perf_counter() - t0
@@ -284,10 +374,10 @@ class CloudASR:
                             text = ""
 
         if text:
-            self.cache[cache_key] = text
+            self.cache[cache_key] = (text, self.last_language)
             if len(self.cache) > 256:
                 self.cache.pop(next(iter(self.cache)))
-        return text, ""
+        return text, self.last_language
 
     @staticmethod
     def _fix_accent(text: str) -> str:
@@ -390,6 +480,28 @@ class Translator:
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip()
 
+    def _chat_via(self, base_url: str, key: str, model: str, messages: list,
+                  timeout: float = 25.0, max_tokens: int = 160,
+                  *, preset: str = "") -> str:
+        """v0.3.0：走 provider 抽象层发一次翻译请求。
+
+        与 `_chat` 并存的理由同 `_post_via` —— `_chat` 是参照实现，
+        `tests/test_providers.py` 钉住 provider 构造出的请求与它逐字段相同。
+
+        `preset` 缺省时用 `self.cfg.mt_preset`。智谱兜底那条路径
+        要显式传，因为它是**故障兜底**、不是用户当前选的那个预设
+        （用户可能选的是 qwen，而兜底要发去 zhipu —— 用错 provider
+        会让兜底请求的形状对不上）。
+        """
+        provider = get_mt_provider(preset or self.cfg.mt_preset)
+        req = provider.build(base_url=base_url, key=key, model=model,
+                             messages=messages, max_tokens=max_tokens)
+        client = pooled_client(timeout=30.0)
+        r = client.post(req.url, headers=req.headers, json=req.json_body,
+                        timeout=timeout)
+        r.raise_for_status()
+        return provider.parse(r.json()).text
+
     def warmup(self) -> bool:
         """极短请求把连接池建起来（v0.2.16 挪到 Translator：谁持有谁预热）。
 
@@ -405,7 +517,7 @@ class Translator:
             key = self.cfg.mt_key()
             if not base_url or not key:
                 return False
-            self._chat(base_url, key, model,
+            self._chat_via(base_url, key, model,
                        [{"role": "user", "content": "ok"}],
                        timeout=15.0, max_tokens=1)
             return True
@@ -414,12 +526,12 @@ class Translator:
 
     @staticmethod
     def _is_permanent(e: Exception) -> bool:
-        """4xx（除 408/429）= 重试也不会好的错：Key 无效(401)、音频超大(413)、
-        参数错(422)。对它们重试只会白烧 8+22+22 秒，还把单 worker 队列堵死。"""
-        if isinstance(e, httpx.HTTPStatusError):
-            code = e.response.status_code
-            return 400 <= code < 500 and code not in (408, 429)
-        return False
+        """保留薄壳，只为不打断可能存在的外部调用。
+
+        实现已提到模块级 `_is_permanent_error` —— 它原本只被
+        `CloudASR` 调用，而定义却落在**这个类**里（详见那里的大段说明）。
+        """
+        return _is_permanent_error(e)
 
     def usage_stats(self) -> dict:
         """翻译用量统计（设置页「本地占比」卡片用）。
@@ -613,14 +725,14 @@ class Translator:
                     "你是《无畏契约》(VALORANT) 玩家的实时语音翻译器。\n"
                     + STRICT_RULES_ZH + "\n" + "\n".join(sys_parts)
                 )
-                out = self._chat(base_url, key, model,
-                                 [{"role": "system", "content": sys_prompt},
-                                  {"role": "user",
-                                   "content": f"把下面的语音翻译成{tname}。\n{cloud_in}"}])
+                out = self._chat_via(base_url, key, model,
+                                  [{"role": "system", "content": sys_prompt},
+                                   {"role": "user",
+                                    "content": f"把下面的语音翻译成{tname}。\n{cloud_in}"}])
             else:
-                out = self._chat(base_url, key, model,
-                                 [{"role": "user",
-                                   "content": f"把下面的文本翻译成{tname}，不要额外解释。\n{cloud_in}"}])
+                out = self._chat_via(base_url, key, model,
+                                     [{"role": "user",
+                                      "content": f"把下面的文本翻译成{tname}，不要额外解释。\n{cloud_in}"}])
         except Exception:
             fb_model = MT_PRESETS["zhipu"]["model"]
             if base_url == MT_PRESETS["zhipu"]["base_url"]:
@@ -628,12 +740,18 @@ class Translator:
             fb_key = self.cfg.mt_keys.get("zhipu", "")
             if not fb_key:
                 raise
-            out = self._chat(MT_PRESETS["zhipu"]["base_url"], fb_key, fb_model,
-                             [{"role": "system",
-                               "content": "你是电竞游戏语音翻译器，只输出译文。\n"
-                                          + STRICT_RULES_ZH
-                                          + f"\n术语对照：{gl or '无'}"},
-                              {"role": "user", "content": text}])
+            # ★ 显式指定 preset="zhipu"：用户当前选的可能�� qwen，
+            #   而这条是**故障兜底**要发去智谱。用当前预设去构造
+            #   智谱的请求，形状就对了地址 —— 表现是 404 或参数报错，
+            #   而它本该是「主服务挂了还能出字」的最后一道保险。
+            out = self._chat_via(MT_PRESETS["zhipu"]["base_url"], fb_key,
+                                 fb_model,
+                                 [{"role": "system",
+                                   "content": "你是电竞游戏语音翻译器，只输出译文。\n"
+                                              + STRICT_RULES_ZH
+                                              + f"\n术语对照：{gl or '无'}"},
+                                  {"role": "user", "content": text}],
+                                 preset="zhipu")
             self.used_fallback = True
         finally:
             self.last_latency = time.perf_counter() - t0
@@ -693,21 +811,22 @@ class Translator:
             #   「they 掉包了 the 烟 on site」这种混排垃圾（实测）。
             if not untranslated:
                 try:
-                    _out2, _missed = cross_check.enforce(text, out)
+                    _out2, _missed = cross_check.audit_missed_terms(text, out)
                     if _missed:
                         logging.getLogger("valtrans.engine").info(
                             "云端未采用本地术语译法: %s", _missed)
                 # 可以静默：译文**已经拿到了**（out 在上面就定型了），
-                # enforce 只是事后回贴本地术语。术语表有问题也只该
-                # 少贴一处词，不该把整条已译好的结果丢掉 —— 宁可少纠正，
-                # 不能不出字（宁缺毋滥说的是「不译错」，不是「不出字」）。
+                # audit_missed_terms 只是**事后记账**（不改译文，只写日志）。
+                # 术语表有问题也只该少记一笔账，不该把整条已译好的结果
+                # 丢掉 —— 宁可少纠正，不能不出字
+                # （宁缺毋滥说的是「不译错」，不是「不出字」）。
                 except Exception:
                     pass
 
                 # ── v0.2.13：云端错译的**有证据**纠错（post_edit）──
-                # 与上面的 cross_check.enforce 是两件事：
-                #   enforce = 记账（不改写，因为它要动语序，会造病句）
-                #   本模块  = 只整词替换已知错译（不动语序，无病句风险）
+                # 与上面的 cross_check.audit_missed_terms 是两件事：
+                #   audit_missed_terms = 只记账（连改写都不做，见其 docstring）
+                #   本模块             = 只整词替换已知错译（不动语序，无病句风险）
                 # 依据实测：本地词表在真实语料上 0/10 命中，
                 # 决定译文质量的是云端，而它会把 B site 当成「B站」。
                 try:

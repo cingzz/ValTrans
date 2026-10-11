@@ -22,8 +22,10 @@ import threading
 import time
 import webbrowser
 from dataclasses import asdict
+from urllib.parse import urlparse
 
-from ..core.config import AppConfig, ASR_PRESETS, MT_PRESETS, CONFIG_DIR, LOG_DIR
+from ..core.config import (AppConfig, ASR_PRESETS, MT_PRESETS, TTS_PRESETS,
+                            CONFIG_DIR, LOG_DIR)
 from ..core.pipeline import Pipeline
 from ..core.audio_capture import find_cable_devices
 from ..services.engine import CloudASR, Translator
@@ -94,19 +96,29 @@ def _uiwin_patch(patch: dict) -> dict:
     """仅放行允许写入配置的字段（白名单）。
 
     注意：overlay_style / overlay_anim / fade_seconds 属于旧 PySide6 界面的
-    5 样式×4 动画体系，Web 浮窗只有一套视觉，这里不再放行（Qt 回退路径
-    直接写 AppConfig，不经过本白名单，不受影响）。
+    5 样式×4 动画体系，Web 浮窗只有一套视觉，这里不放行。
+    v0.3.0 起 Qt 回退路径已整体删除，所以**这三个字段从此没有任何写入口**
+    （留在 AppConfig 里只是读旧配置不报错）—— 本白名单是唯一的写入口了，
+    漏放行就等于永久写不进去，这句注释就是提醒后来人：不是漏了，是故意的。
     """
     allowed = {
         "capture_mode", "cable_output_device", "loopback_device", "mic_device",
         "vad_mode", "rms_threshold", "partial_enabled", "draft_interval_ms",
         "asr_preset", "asr_key", "mt_preset", "mt_key", "custom_asr_url", "custom_asr_model",
+        # ★ v0.3.1 补 `tts_key`（外部审计 4/8 一致命中）
+        #   save_cfg 里是 `tts_key = clean.pop("tts_key", None)`，
+        #   也就是它**期望**白名单放行；白名单没放行 -> 静默丢弃。
+        #   后果：用户填了小米 MiMo 的 TTS Key，点保存，界面不报错，
+        #   Key 却从不落盘，下次启动输入框是空的 —— 用户只会以为
+        #   「软件没记住」。这正是本项目记了多次的「能打开≠能保存」。
+        "tts_key",
         "custom_mt_url", "custom_mt_model", "target_lang", "reverse_target_lang", "lock_source_lang",
         "overlay_x", "overlay_y", "overlay_opacity", "overlay_font_size", "overlay_width",
         "overlay_locked", "overlay_enabled", "overlay_pinned", "overlay_height",
         "show_original", "show_speaker", "tts_enabled", "tts_voice", "tts_rate", "tts_pitch",
         "streamer_mode", "asr_mode", "auto_copy",
         "hotkey_lock", "hotkey_review", "hotkey_ptt", "hotkey_move",
+        "hotkey_select", "select_target", "tts_preset",
         "first_run_done", "disclaimer_accepted",
     }
     return {k: v for k, v in patch.items() if k in allowed}
@@ -133,7 +145,57 @@ def _masked_cfg(cfg) -> dict:
     d = asdict(cfg)
     d["asr_keys"] = {k: _mask_secret(v) for k, v in (cfg.asr_keys or {}).items()}
     d["mt_keys"] = {k: _mask_secret(v) for k, v in (cfg.mt_keys or {}).items()}
+    # ★ v0.3.0：TTS Key 也要掩码。
+    #   漏掉这一行的后果很隐蔽 —— asdict(cfg) 会把**明文 Key 原样**
+    #   交给前端。界面上看不出问题（反正输入框被填了），
+    #   但任何一次「打开开发者工具」或抓一次 js_api 载荷就能看到真 Key。
+    d["tts_keys"] = {k: _mask_secret(v)
+                     for k, v in (getattr(cfg, "tts_keys", {}) or {}).items()}
     return d
+
+
+# ---------------------------------------------------------------------------
+# ★ v0.3.1：外链域名白名单（外部审计 Ling P3 / Step-5 S4 / MiMo S4 / Big Pickle）
+# ---------------------------------------------------------------------------
+# 原来 `open_url` 只做一件事：`url.startswith("https://")`。
+# 也就是说**任何 https 地址都能被打开** —— 包括钓鱼站。
+#
+# 为什么这算漏洞而不是「用户自己点的」：
+#   `open_url` 是暴露给渲染进程的 JS API。前端一旦被注入（哪怕只是
+#   一个没转义的模板串），攻击者就能让它弹出一个长得像 GitHub
+#   或像云服务商控制台的页面，让用户在里面填 Key。
+#   本项目的 Key 是用户自备的、且**按量计费**，一个像样的钓鱼页
+#   直接换走真金白银。
+#
+# 白名单按**当前实际用到的**来定（逐个回源码核对过，不是拍脑袋）：
+#   · cloud.siliconflow.cn   Wizard.jsx / Home.jsx 的注册页、密钥页
+#   · github.com             About.jsx、FeedbackDialog（issues/new）
+#   · *.github.com           GitHub 资产跳转
+#   · *.siliconflow.cn       同服务商的其它控制台页
+# 要加新域名**必须在这里加一行**，不要退回「只查 https 前缀」。
+_ALLOWED_URL_HOSTS = (
+    "github.com",
+    "cloud.siliconflow.cn",
+)
+_ALLOWED_URL_SUFFIXES = (
+    ".github.com",
+    ".siliconflow.cn",
+)
+
+
+def _is_allowed_url(url: str) -> bool:
+    """返回该 URL 是否属于允许外跳的域名。判据是**主机名**，不是前缀。"""
+    if not isinstance(url, str):
+        return False
+    try:
+        host = (urlparse(url.strip()).hostname or "").lower().rstrip(".")
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in _ALLOWED_URL_HOSTS:
+        return True
+    return any(host.endswith(sfx) for sfx in _ALLOWED_URL_SUFFIXES)
 
 
 class Api:
@@ -188,8 +250,17 @@ class Api:
         if self._win is None:
             return
         js = json.dumps(payload, ensure_ascii=False)
+        # ★ v0.3.1：name 也必须走 json.dumps，不能裸拼（外部审计 LongCat 2.2 /
+        #   SpaceBunny 2.4 / Ling）。
+        #   实测当前所有调用点传的都是写死的常量（"status"/"subtitle"/
+        #   "ptt"/"notice"），所以**现在**没有可利用点，严重度低。
+        #   但这是典型的「形对了、事没锁死」：函数签名允许任何字符串，
+        #   下一个人加个 `self._emit(f"ptt_{lang}", ...)` 就直接把 JS 注入面
+        #   打开了，而且**没有任何东西会报警**。
+        #   改动成本一行，把这条路一次性堵死。
+        ev = json.dumps(name, ensure_ascii=False)
         try:
-            self._win.evaluate_js(f"window.__vt && window.__vt.emit('{name}', {js})")
+            self._win.evaluate_js(f"window.__vt && window.__vt.emit({ev}, {js})")
         except Exception:
             pass
 
@@ -830,6 +901,36 @@ class Api:
                                 else "解锁（可点按/拖动面板）"))
 
     # ---------- JS 调用的同步接口 ----------
+    def _live_cfg(self) -> dict:
+        """脱敏配置 + **实时**浮窗可见性。
+
+        ★ v0.3.1：为什么必须在这里注入，而不是让前端自己去写配置
+        ----------------------------------------------------------
+        `overlay_visible` 是**运行时状态**（浮窗懒创建：队友不说话就不建窗），
+        不是用户设置。它有两个特点决定了归属：
+
+          1. Python 侧从不持久化它 —— `get_overlay_state` 每轮现算；
+          2. 它**不在可写白名单**里（`_uiwin_patch`），前端写不进去。
+
+        之前前端 Home.jsx 干的是 `patchCfg({...cfg, overlay_visible})`：
+        全量回传 -> 后端按白名单过滤掉 -> 返回的 cfg 仍是旧值 -> 还原 ->
+        下一轮比对依然不一致 -> **每 2 秒一次全量写盘，无限循环**，
+        且不报错、界面看着也正常（只有去数实际写盘次数才看得见）。
+
+        既然写不进去，那就**由读的一方负责给准值**：
+        get_state / save_cfg 的返回里带上实测值，前端只读不写。
+        这样 Styles.jsx 那种「只读不轮询」的页面也能拿到真值，
+        不会再出现「一重启就归零」。
+        """
+        d = _masked_cfg(self._cfg)
+        try:
+            self._prune_dead_overlay()
+            d["overlay_visible"] = self._overlay_is_visible()
+        except Exception:
+            # 拿不到就保持配置里的值，不能因为这一个字段让整个 get_state 崩
+            logging.getLogger("valtrans.webui").exception("读取浮窗实际可见性失败")
+        return d
+
     def get_state(self) -> dict:
         # v0.2.11：加 `running` 供前端**状态对账**用。
         # 用户实测「多按几次按钮就卡在高亮态」——根因之一是前端
@@ -839,7 +940,8 @@ class Api:
                     and self._pipeline._running.is_set())
         # ★ v0.2.16：Key 脱敏回显（此前明文全量返回给渲染进程）
         # ★ v0.2.19：带上管线统计（丢段/失败可见性）
-        return {"cfg": _masked_cfg(self._cfg), "version": VERSION,
+        # ★ v0.3.1：cfg 改用 _live_cfg（附实时浮窗可见性），见其注释
+        return {"cfg": self._live_cfg(), "version": VERSION,
                 "notice": self._notice, "running": _run,
                 "stats": dict(getattr(self._pipeline, "stats", {}))}
 
@@ -874,14 +976,24 @@ class Api:
             Qwen2.5-14B     约 ¥1.26 / M tokens
         写死在 preset 的 price 字段里，避免 UI 端再维护一份。
         """
-        return {
-            "asr": {k: {"label": p["label"], "price": p.get("price", ""),
-                        "note": p.get("note", "")}
-                    for k, p in ASR_PRESETS.items()},
-            "mt": {k: {"label": p["label"], "price": p.get("price", ""),
-                       "note": p.get("note", "")}
-                   for k, p in MT_PRESETS.items()},
-        }
+        # ★ v0.3.1：三段原本各写一遍同样的推导。收成一个 ——
+        #   同一个形状写三遍，加字段时必漏一处（本轮刚在别处栽过一次）。
+        def _pack(d):
+            return {k: {
+                "label": p["label"],
+                "price": p.get("price", ""),
+                "note": p.get("note", ""),
+                # 实测准确率。**没有实测的档就是空串** ——
+                # UI 对空值不渲染这一段，绝不用编的数字填。
+                "acc": p.get("acc", ""),
+            } for k, p in d.items()}
+
+        # ★ v0.3.0：TTS 预设也交给设置页渲染。
+        #   与 ASR/MT 同一套 {label, price, note, acc} 形状 ——
+        #   前端那三个下拉框是同一份渲染代码，多一份不多写。
+        return {"asr": _pack(ASR_PRESETS),
+                "mt": _pack(MT_PRESETS),
+                "tts": _pack(TTS_PRESETS)}
 
     # ------------------------------------------------------------------
     # v0.2.6：用量统计 / 自学习 / 更新信息
@@ -1008,8 +1120,30 @@ class Api:
         `Pipeline.__init__` 里**一次性**读进采集器与 VAD 的，
         管线跑起来之后不会再回看 cfg。所以配置改了它就是不知道。
 
-        注意 `on_subtitle` / `on_status` 必须原样传回去 ——
-        重建时漏掉回调，前端就再也收不到字幕与状态了。
+        注意 `on_partial` / `on_drop` 也必须原样传回去 ——
+        重建时漏掉回调，前端就再也收不到草稿字幕与丢段提示了。
+
+        ★ v0.3.1 修（外部审计 2/8 命中，实测确认）
+        ------------------------------------------
+        这段注释原本只写了 `on_subtitle` / `on_status`，
+        而 __init__ 里实际挂了**四个**：
+
+            L160  Pipeline(..., on_subtitle=, on_status=, on_partial=)
+            L167  self._pipeline.on_drop = self._on_pipeline_drop
+
+        于是重建后少了 `on_partial`（草稿字幕）和 `on_drop`（丢段提示）。
+        **正是本注释自己警告过的那类事故**，只是它当初只防住了自己那两个 ——
+        v0.2.19 新加的 on_drop 没有回填到这里。
+
+        后果：用户先开始翻译，再进设置把「本机输出」改成「虚拟声卡」，
+        之后草稿字幕不再出现、丢段不再提示，而且**不报错**。
+
+        ★ 判据怎么写才抓得住（这一条值得单独记）
+        --------------------------------------
+        「Pipeline 构造参数」和「构造后立刻挂的属性」是**两种写法、同一件事**。
+        只比对 `Pipeline(...)` 的关键字参数，就会漏掉 `self._pipeline.on_drop =`
+        这种写法 —— 判据匹配的是「形」，要问的是「事」。
+        所以下面的守护测试必须**同时**统计两处，且逐个名字比对。
         """
         log = logging.getLogger("valtrans.webui")
         if running:
@@ -1019,8 +1153,11 @@ class Api:
                 log.exception("重建前停止管线失败")
         try:
             self._pipeline = Pipeline(self._cfg, on_subtitle=self._on_subtitle,
-                                      on_status=self._on_status)
+                                      on_status=self._on_status,
+                                      on_partial=self._on_partial)
             self._pipeline.external_gate = self._tts.playing
+            # 与 __init__ 保持一致：丢段必须让用户看得见
+            self._pipeline.on_drop = self._on_pipeline_drop
         except Exception:
             log.exception("重建采集管线失败")
             self.notify("切换采集来源失败，详情见 %APPDATA%/ValTrans/logs/webui.log")
@@ -1054,11 +1191,15 @@ class Api:
 
         audio_before = _audio_sig(self._cfg)
         hotkeys_before = (self._cfg.hotkey_lock, self._cfg.hotkey_review,
-                          getattr(self._cfg, "hotkey_move", ""), self._cfg.hotkey_ptt)
+                          getattr(self._cfg, "hotkey_move", ""), self._cfg.hotkey_ptt,
+                          # v0.3.0：划词热键改了也要重启监听。不加这一项的
+                          # 表现是「设置页改了但按键没反应」，而且不报错
+                          getattr(self._cfg, "hotkey_select", ""))
         pinned_before = getattr(self._cfg, "overlay_pinned", False)
         clean = _uiwin_patch(patch if isinstance(patch, dict) else {})
         asr_key = clean.pop("asr_key", None)
         mt_key = clean.pop("mt_key", None)
+        tts_key = clean.pop("tts_key", None)
         for k, v in clean.items():
             setattr(self._cfg, k, v)
         # ★ v0.2.16：前端拿到的是掩码回显 "••••abcd"，原样传回时**不能**
@@ -1067,12 +1208,33 @@ class Api:
             self._cfg.asr_keys[self._cfg.asr_preset] = asr_key.strip()
         if mt_key and not _is_masked_secret(mt_key):
             self._cfg.mt_keys[self._cfg.mt_preset] = mt_key.strip()
+        # ★ v0.3.0：TTS Key 同样走掩码判定 + DPAPI 加密落盘。
+        #   漏掉掩码判定的话，前端回显的「••••abcd」会被当成新 Key 存回去，
+        #   真 Key 被掩码覆盖 —— 与上面 asr_key 那条注释是同一个事故。
+        if tts_key and not _is_masked_secret(tts_key):
+            self._cfg.tts_keys[getattr(self._cfg, "tts_preset",
+                                       "local")] = tts_key.strip()
         self._cfg.save()
         # 联动
         self._tts.voice_override = self._cfg.tts_voice
         self._tts.rate = self._cfg.tts_rate
         self._tts.pitch = self._cfg.tts_pitch
         self._tts.sf_key = self._cfg.mt_key()   # ★ v0.2.18：CosyVoice 用同一把硅基 Key
+        # ★ v0.3.0：TTS 档位（默认 local = 本地 edge 链，不发网络请求）
+        _tb, _tm, _tp = self._cfg.tts_endpoint()
+        # ★ 这两处字符串**原来漏了引号**，写成裸名字 tts_preset / local：
+        #     getattr(self._cfg, tts_preset, local)
+        #   `tts_preset` 和 `local` 是两个不存在的名字，一执行就 NameError。
+        #   而它在 save_cfg 里 —— **用户点「保存全部设置」必走这条路**，
+        #   也就是说「保存设置」这个最基本的动作是坏的。
+        #
+        #   为什么一直没人发现：
+        #     · 它只在 save_cfg 里，启动流程不走 —— 所以「能打开」不等于「能保存」
+        #     · start() 里那一份（1267 行）是**对的**，两处长得几乎一样，
+        #       肉眼看过去只会觉得「这个我写过」
+        #   判据是 tests/test_python_wiring.py 的「模块内名字都定义了」。
+        self._tts.configure_tts(getattr(self._cfg, "tts_preset", "local"),
+                                self._cfg.tts_key(), _tb, _tm)
         self._tts.enabled = self._cfg.tts_enabled and not self._cfg.streamer_mode
         self._push_overlay_config()
         if self._overlay is not None and not self._cfg.overlay_enabled:
@@ -1089,7 +1251,8 @@ class Api:
             self.review_overlay()
         # 热键改动必须重启监听才生效（pynput 不会自动重读配置）
         hotkeys_after = (self._cfg.hotkey_lock, self._cfg.hotkey_review,
-                         getattr(self._cfg, "hotkey_move", ""), self._cfg.hotkey_ptt)
+                         getattr(self._cfg, "hotkey_move", ""), self._cfg.hotkey_ptt,
+                         getattr(self._cfg, "hotkey_select", ""))
         if hotkeys_after != hotkeys_before:
             self._start_hotkeys()
             # PTT 监听绑定在 cfg.hotkey_ptt 上，运行中也要重启
@@ -1114,11 +1277,23 @@ class Api:
                      audio_before, audio_after, running)
             self._rebuild_capture(running=running)
         # ★ v0.2.16：Key 脱敏回显
-        return _masked_cfg(self._cfg)
+        # ★ v0.3.1：改用 _live_cfg —— 前端 patchCfg 是 `setCfg(返回值)`，
+        #   这里若回陈旧的 overlay_visible，等于把刚查准的值又盖回旧值。
+        return self._live_cfg()
 
     def open_url(self, url: str) -> None:
-        if isinstance(url, str) and url.startswith("https://"):
-            webbrowser.open(url)
+        """用系统默认浏览器打开**白名单内**的外链。
+
+        ★ v0.3.1：原来只判 `startswith("https://")` —— 等于任何 https
+          都能弹。白名单理由见模块级 `_ALLOWED_URL_HOSTS` 的注释。
+        ★ 拒绝时不抛异常、不提示：这个 API 由前端在按钮回调里调用，
+          抛出去只会变成一个没人看的 console 错误；真正的防御是「不打开」。
+        """
+        if _is_allowed_url(url):
+            webbrowser.open(url.strip())
+        else:
+            logging.getLogger("valtrans.webui").warning(
+                "拒绝打开非白名单外链：%r", (url or "")[:200])
 
     # ---------- 主窗控制（自绘标题栏用） ----------
     # 无边框后这几个是标题栏按钮的全部实现。原来的 win_max 只能最大化，
@@ -1231,6 +1406,12 @@ class Api:
             self._tts.rate = self._cfg.tts_rate
             self._tts.pitch = self._cfg.tts_pitch
             self._tts.sf_key = self._cfg.mt_key()
+            # ★ v0.3.0：TTS 档位。与 save_cfg 里那处**成对** ——
+            #   少一处的话，用户在设置里切了 TTS 服务商，不重启管线
+            #   永远不生效，而界面上看不出任何异常。
+            _tb, _tm, _tp = self._cfg.tts_endpoint()
+            self._tts.configure_tts(getattr(self._cfg, "tts_preset", "local"),
+                                    self._cfg.tts_key(), _tb, _tm)
             self._tts.enabled = self._cfg.tts_enabled and not self._cfg.streamer_mode
             self._pipeline.start()
             # ★ v0.2.16：VALTRANS_TEST=1 时跳过 PTT 全局键盘监听——
@@ -1493,6 +1674,106 @@ class Api:
         threading.Thread(target=run, daemon=True).start()
 
     # ---------- 向导 ----------
+    # ---------- v0.3.0：会议/通话场景 ----------
+    def meeting_check(self) -> dict:
+        """开会同传的就绪度报告（供向导逐步显示）。
+
+        逻辑在 core/scenario.py 里，那边可离线测；
+        这里只负责把运行态（是否在跑、电平多少）喂进去。
+        """
+        from ..core.scenario import meeting_readiness
+        running = False
+        try:
+            running = bool(getattr(self._pipeline, "_running", None)
+                            and self._pipeline._running.is_set())
+        except Exception:
+            pass
+        # 电平只在**真的在采集**时才有意义；没在跑就传 -1 表示
+        # 「不知道」，不能传 0 —— 「没开始监听」和「线没接上」
+        # 是两回事，混成一个 0 会让用户去查错方向。
+        lvl = self.get_level() if running else -1
+        r = meeting_readiness(self._cfg, running=running, level=lvl)
+        out = r.as_dict()
+        out["running"] = running
+        out["level"] = lvl
+        return out
+
+    # ---------- v0.3.0：划词翻译 ----------
+    def select_translate(self) -> None:
+        """热键触发：取选区 → 翻译 → 回填剪贴板 + 浮窗显示。
+
+        这个方法由 `_wrap_hotkey` 塞进串行队列后在**消费者线程**上跑
+        （不是 pynput 的监听线程），所以这里可以放心做 I/O 和网络请求。
+
+        空选区的处理
+        ------------
+        没选中文字时**安静返回**，不弹提示、不报错。
+        因为触发键是全局的，用户很可能在别的场合误触；
+        弹红条等于教会用户「这个功能会捣乱」。
+        """
+        try:
+            from ..core.selection import (SelectionUnavailable, fill_clipboard,
+                                          grab_selection, pick_target)
+        except Exception as e:
+            self.notify("划词翻译不可用：%s" % e)
+            return
+
+        try:
+            picked = grab_selection()
+        except SelectionUnavailable as e:
+            self.notify("划词翻译：%s" % e)
+            return
+        except Exception as e:
+            logging.getLogger("valtrans.webui").exception("取选区异常")
+            self.notify("划词翻译：取选区失败")
+            return
+        if not picked.strip():
+            return                      # 空选区：静默
+
+        text = picked.strip()
+        # 超长文本翻译会又慢又不准，而且明显是「选错了」
+        limit = 800
+        truncated = False
+        if len(text) > limit:
+            text = text[:limit]
+            truncated = True
+
+        cfg_target = getattr(self._cfg, "select_target", "auto")
+        target = pick_target(text) if cfg_target == "auto" else cfg_target
+
+        try:
+            out = self._mt.translate(text, target)
+        except Exception as e:
+            logging.getLogger("valtrans.webui").exception("划词翻译失败")
+            self.notify("划词翻译失败：%s" % e)
+            return
+        if not out:
+            self.notify("划词翻译没有结果")
+            return
+
+        try:
+            fill_clipboard(out)
+        except SelectionUnavailable as e:
+            # 翻译是成功的，只是回填失败 —— 必须分开报，
+            # 否则用户会以为翻译也失败了而白按一次
+            self.notify("译文已生成，但回填剪贴板失败：%s" % e)
+        except Exception as e:
+            self.notify("译文已生成，但回填剪贴板失败")
+
+        note = "已复制译文%s" % ("（原文过长，已截断）" if truncated else "")
+        try:
+            self.notify(note)
+        except Exception:
+            pass
+        # 推到浮窗/主窗，让结果不只存在于剪贴板里
+        try:
+            self._emit("select_result", {"original": text, "translated": out,
+                                         "target": target})
+        except Exception:
+            pass
+
+    # ---------- v0.3.0：小米 TTS / 腾讯混元 在设置页的说明 ----------
+
     def detect_audio(self) -> dict:
         try:
             cin, cout = find_cable_devices()
@@ -1646,11 +1927,13 @@ class Api:
         try:
             self._cfg.save()
         except Exception:
+            # 进程正在退出：保存失败已经无力回天，宁可静默也别挡住退出
             pass
         if self._win is not None:
             try:
                 self._win.destroy()
             except Exception:
+                # 销毁窗口失败不该挡住进程退出（窗口随进程一起没了）
                 pass
 
     # ---------- 热键 ----------
@@ -1677,12 +1960,19 @@ class Api:
                 self._hotkeys.stop()
                 self._hotkeys = None
         except Exception:
+            # 旧热键没停干净不该挡住**重新注册**（下面紧接着注册新的）；
+            # 真正注册失败会在下面那步暴露出来，不会被这里吞掉
             pass
         log = logging.getLogger("valtrans.webui")
         mapping = {}
         for hotkey, fn in ((getattr(self._cfg, "hotkey_lock", ""), self.toggle_lock),
                            (getattr(self._cfg, "hotkey_review", ""), self.review_overlay),
-                           (getattr(self._cfg, "hotkey_move", ""), self.toggle_pin)):
+                           (getattr(self._cfg, "hotkey_move", ""), self.toggle_pin),
+                           # v0.3.0：划词翻译。与其余热键不同，它
+                           # **不需要本软件在前台** —— 触发后要模拟 Ctrl+C
+                           # 去别的程序取选区。
+                           (getattr(self._cfg, "hotkey_select", ""),
+                            self.select_translate)):
             if not hotkey:
                 continue
             try:
@@ -1844,8 +2134,14 @@ class Api:
         if getattr(self, "_apply_overlay_style", None):
             try:
                 self._apply_overlay_style()
-            except Exception:
-                pass
+            except Exception as e:
+                # ★ 这一处**不能**像上面那样静默：它不是清理路径。
+                #   刷样式的后果是用户可见的 —— 按了「固定」，
+                #   外观却没变，而下面那句 notify 只说明**状态**变了、
+                #   不说明**样式**刷成功了。两边一对照就是「按钮没反应」。
+                #   记一行 warning，排查时才知道卡在这一步。
+                logging.getLogger("valtrans.webui").warning(
+                    "应用浮窗样式失败：%s", e)
         self.notify("字幕面板已" + ("固定（鼠标穿透）" if self._cfg.overlay_pinned
                                  else "解锁拖动 · 可按住面板移动"))
         return self._cfg.overlay_pinned

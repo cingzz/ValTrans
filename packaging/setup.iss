@@ -4,7 +4,7 @@
 ;       （tests/verify_src.py 会自动比对，不一致即报错）
 
 #define AppName "ValTrans"
-#define AppVersion "0.2.22"
+#define AppVersion "0.3.0"
 #define AppPublisher "ValTrans Project"
 #define AppExeName "ValTrans.exe"
 

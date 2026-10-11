@@ -41,9 +41,7 @@ _HOMOPHONE = {
     # 包相关（真的在说包时）
     "埋发": "spike down", "买发": "spike down", "我的包": "spike down",
     "埋了": "spike down", "我的包": "spike down", "我包": "spike down",
-    "包掉了": "spike down", "包已下": "spike is down",
-    # 下包 / 拆包（直译会变成"种植尖刺"，必须纠正）
-    "下包": "plant the spike", "安包": "plant the spike", "放包": "plant the spike",
+    "包掉了": "spike down", "下包": "plant the spike", "安包": "plant the spike", "放包": "plant the spike",
     "种包": "plant the spike", "插包": "plant the spike",
     "拆包": "defuse", "拆雷": "defuse", "拆弹": "defuse",
     "偷包": "ninja defuse", "假拆": "fake defuse", "强拆": "sticking",
@@ -52,13 +50,11 @@ _HOMOPHONE = {
     "交叉火力": "crossfire", "发枪": "drop me a gun", "发我一把": "drop me one",
     "断后": "lurk", "残局": "clutch", "白给": "feeding",
     "架人": "camp them", "大残": "one shot", "换人": "trade",
-    "补枪": "trade kill", "大身位拉": "wide peek", "小身位骗": "shoulder peek",
+    "大身位拉": "wide peek", "小身位骗": "shoulder peek",
     "穿射": "spam", "点了他": "i lit him", "杀最多": "top frag",
     "杀最少": "bottom frag", "假打": "fake", "绕屁股": "flank",
-    "全枪全弹": "full buy", "太卡了": "im lagging", "高台": "heaven",
-    "我有钱": "i got money", "我有米": "i got money", "我有大": "i got my ult",
-    "进点": "push in", "一枪死": "one shot me", "老六": "camper",
-    "大拉": "wide swing", "小拉": "jiggle peek", "老六": "lurker",
+    "全枪全弹": "full buy", "太卡了": "im lagging", "我有钱": "i got money", "我有米": "i got money", "我有大": "i got my ult",
+    "进点": "push in", "一枪死": "one shot me", "大拉": "wide swing", "小拉": "jiggle peek", "老六": "lurker",
     "爆龙": "spike will explode", "龙爆了": "spike is ticking",
     # 经济
     "起枪": "full buy", "全起": "full buy", "满枪": "full buy",

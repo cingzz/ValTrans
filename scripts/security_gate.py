@@ -75,6 +75,65 @@ SIGNATURES = [
 # 明知无害的前缀（CSS 属性名等）—— 命中即忽略
 ALLOW_PREFIX = ("mask-", "-webkit-mask", "border-", "webkit-", "moz-")
 
+# ---------------------------------------------------------------------------
+# 测试夹具（假 Key）的识别 —— v0.3.1
+# ---------------------------------------------------------------------------
+# ★ 为什么必须有这一段
+# --------------------
+# 修这个闸门前，它对本仓库**恒 exit 1**：唯一那处命中是
+#     tests/test_asr_failure_path.py
+#         BAD_KEY = <自述无效的假 Key，形如 sk- + THISKEY + ...>
+# 一个**自述无效**的假 Key，被当成了泄漏。
+# （这里不写完整形态：完整形态会被**本文件自己**的签名扫出来，
+#   虽然会被判成夹具不判红，但按 scripts/gate_selftest.py 开头
+#   立的规矩，检测器文件里不该出现可扫描的完整凭据。）
+#
+# 后果不是「多报一次」，是**整个闸门失效**：
+#   既然跑一次必然红，那就没人会再看它的输出 ——
+#   哪怕哪天真混进了一把真 Key，报警和往常一模一样，谁也不会抬头。
+#   本项目已经写过：「永远红的报告等于没有报告」。
+#   一个只会喊狼来了的哨兵，比没有哨兵更危险，因为它让人以为有哨兵。
+#
+# ★ 为什么不用白名单
+# ------------------
+# 白名单要「每个夹具登记一次」，文件一多就腐烂：
+#   · 新增测试夹具时没人记得登记 -> 闸门又变红 -> 又没人看
+#   · 登记过的东西永远不会被复查 -> 真 Key 被误登记进去也没人发现
+# 改用**负特征**（真 Key 满足不了的性质），它不会随文件数量退化：
+#
+#   ① 自述标记：token 里出现大写占位词（THISKEY / PLACEHOLDER / ...）
+#      真 Key 是 base64/hex 随机串，不会拼出可读英文单词。
+#   ② 极低熵：同一字符连续 ≥8 次（00000000 / aaaaaaaa）
+#      base64 里出现 8 连同字符的概率约 (1/64)^7 ≈ 4e-14，实际不可能。
+#
+# 两条都是「真 Key 不可能满足」，而不是「我们选择放过」。
+# 代价是夹具仍然会被打印出来（INFO 而非静默），
+# 所以「放过了什么」始终是可复核的。
+FIXTURE_MARKS = (
+    "THISKEY", "THISIS", "PLACEHOLDER", "INTENTIONALLY", "NOTAREAL",
+    "NOT_A_REAL", "YOURKEY", "YOUR_KEY", "YOURTOKEN", "EXAMPLEKEY",
+    "DUMMYKEY", "SAMPLEKEY", "FAKEKEY", "DEADBEEF", "TESTKEY",
+    "CHANGEME", "REPLACEME",
+)
+_FIXTURE_RUN = re.compile(r"(.)\1{7,}")     # 同一字符连续 ≥8 次
+
+STRICT = False        # --strict 时置 True：夹具也一并判红
+
+
+def is_fixture(s: str) -> bool:
+    """这段看起来是**测试用的假凭据**，而不是真泄漏。
+
+    只认两种负特征（见上方注释）。**不接受人工登记** ——
+    白名单会腐烂，负特征不会。
+    `--strict` 下一律返回 False（宁可误报，也不放过）。
+    """
+    if STRICT:
+        return False
+    u = s.upper()
+    if any(m in u for m in FIXTURE_MARKS):
+        return True
+    return bool(_FIXTURE_RUN.search(s))
+
 FORBIDDEN_NAMES = {"config.json", "secrets.json", ".env", ".env.local",
                    "credentials.json", "token.json", ".github_token"}
 FORBIDDEN_EXT = (".key", ".pem", ".pfx", ".p12")
@@ -105,6 +164,7 @@ def scan_tree(root):
     print("=" * 70)
     nfiles = 0
     found = []
+    fixtures = []
     for p, txt in iter_files(root):
         nfiles += 1
         base = os.path.basename(p)
@@ -116,13 +176,23 @@ def scan_tree(root):
                 if any(s.lower().startswith(a) for a in ALLOW_PREFIX):
                     continue
                 ln = txt[:m.start()].count("\n") + 1
+                # 夹具**不静默**：照样打印，只是不判红。
+                # 静默会让人无法复核「闸门到底放过了什么」。
+                if is_fixture(s):
+                    fixtures.append((p, ln, name, s))
+                    continue
                 found.append((p, ln, name, s))
+    for p, ln, name, s in fixtures:
+        masked = s[:10] + "…" + s[-3:] if len(s) > 16 else s
+        print("  INFO [测试夹具，放行] %s:%d  %s"
+              % (os.path.relpath(p, root), ln, masked))
     for p, ln, name, s in found:
         masked = s[:10] + "…" + s[-3:] if len(s) > 16 else s
         print("  FAIL [%s] %s%s  %s"
               % (name, os.path.relpath(p, root),
                  (":%d" % ln) if ln else "", masked))
-    print("  扫了 %d 个文本文件，命中 %d 处" % (nfiles, len(found)))
+    print("  扫了 %d 个文本文件，命中 %d 处（另识别测试夹具 %d 处）"
+          % (nfiles, len(found), len(fixtures)))
     return found
 
 
@@ -139,10 +209,14 @@ def scan_git_history(root):
                        encoding="utf-8", errors="replace")
     blob = p.stdout or ""
     found = []
+    nfix = 0
     for name, rx in SIGNATURES:
         for m in rx.finditer(blob):
             s = m.group(0)
             if any(s.lower().startswith(a) for a in ALLOW_PREFIX):
+                continue
+            if is_fixture(s):
+                nfix += 1
                 continue
             found.append(("历史", 0, name, s))
     n = subprocess.run(["git", "rev-list", "--all", "--count"], cwd=root,
@@ -150,7 +224,8 @@ def scan_git_history(root):
                        encoding="utf-8", errors="replace").stdout.strip()
     for _, _, name, s in found:
         print("  FAIL [历史中的 %s] %s…" % (name, s[:10]))
-    print("  %s 次提交，命中 %d 处" % (n or "0", len(found)))
+    print("  %s 次提交，命中 %d 处（另识别测试夹具 %d 处）"
+          % (n or "0", len(found), nfix))
     if not found:
         print("  OK   历史干净")
     return found
@@ -177,6 +252,7 @@ def scan_staged(root):
                                capture_output=True, text=True,
                                encoding="utf-8", errors="replace").stdout
     found = []
+    nfix = 0
     for n in names:
         base = os.path.basename(n)
         if base in FORBIDDEN_NAMES or n.lower().endswith(FORBIDDEN_EXT):
@@ -186,10 +262,14 @@ def scan_staged(root):
             s = m.group(0)
             if any(s.lower().startswith(a) for a in ALLOW_PREFIX):
                 continue
+            if is_fixture(s):
+                nfix += 1
+                continue
             found.append((name, s))
     for n, s in found:
         print("  FAIL [暂存] %s" % s)
-    print("  暂存 %d 个文件，命中 %d 处" % (len(names), len(found)))
+    print("  暂存 %d 个文件，命中 %d 处（另识别测试夹具 %d 处）"
+          % (len(names), len(found), nfix))
     if not found:
         print("  OK   暂存区干净")
     return found
@@ -217,11 +297,17 @@ def check_tracked(root):
 
 
 def main():
+    global STRICT
     ap = argparse.ArgumentParser(description="提交前安全闸门")
     ap.add_argument("roots", nargs="*", default=["."])
     ap.add_argument("--no-git", action="store_true",
                     help="跳过 git 历史与暂存区检查")
+    ap.add_argument("--strict", action="store_true",
+                    help="测试夹具（假 Key）也判红。用于发布前最后把关："
+                         "默认允许夹具是为了让闸门「能红也能绿」，"
+                         "但发布产物里本就不该有假 Key 这种噪音")
     args = ap.parse_args()
+    STRICT = bool(args.strict)
 
     total = 0
     for r in (args.roots or ["."]):

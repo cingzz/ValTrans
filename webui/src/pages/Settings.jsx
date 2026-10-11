@@ -2,6 +2,41 @@ import React, { useEffect, useState } from 'react'
 import { bus, call } from '../api.js'
 import HotkeyInput, { prettyHotkey } from '../HotkeyInput.jsx'
 
+// ★ v0.3.0：热键清单**只写这一份**。
+//   fallback 是「用户配置里没这个键时显示什么」—— 不是生效值，
+//   仅仅是展示用的兜底，避免刚升级的老配置显示成空白。
+//   （config.py 里的 dataclass 默认值才是生效值，这里只管显示。）
+const HK_ROWS = [
+  { field: 'hotkey_lock', label: '锁定穿透', hint: '锁定后鼠标穿透浮窗，不挡游戏操作' },
+  { field: 'hotkey_review', label: '回看字幕', hint: '随时把字幕面板叫回屏幕' },
+  { field: 'hotkey_move', label: '固定/拖动', hint: '游戏中一键切换：固定（穿透）↔ 可拖动',
+    fallback: '<ctrl>+<shift>+d' },
+  { field: 'hotkey_ptt', label: '按住说话', allowSingle: true,
+    hint: '可设单键（如 V）或组合键，按住不放说话，松开即翻译并复制' },
+  { field: 'hotkey_select', label: '划词翻译', fallback: '<ctrl>+<alt>+t',
+    hint: '在任何程序里选中文字后按它，译文自动复制到剪贴板。不需要本软件在前台' },
+]
+
+// ★ v0.3.1：预设的展示只写这一份 —— ASR / 翻译 / 朗读三个下拉共用。
+//   三处各写一遍同样的拼接，加字段时必漏一处（后端 get_presets 就是这么收的）。
+//
+//   option 里放 price + acc：下拉展开时能**横向比较**各档的价格与准确率，
+//     这是选档最需要的信息，藏在别处等于没标。
+//   缺的字段直接跳过：没有实测数据的档，绝不显示「准确率 」这种空尾巴 ——
+//     空着是诚实，补一个编的数字是骗人。
+const presetOptionText = (p) => {
+  if (typeof p === 'string') return p
+  if (!p) return ''
+  return [p.label, p.price, p.acc].filter(Boolean).join('  ·  ')
+}
+
+// 选中档的注意事项（note），放在下拉正下方 ——
+// 比如 Groq 便宜但国内网络实测 403，这条不写在眼前，用户选了才发现用不了。
+const presetNote = (group, key) => {
+  const p = (group || {})[key]
+  return p && typeof p === 'object' ? (p.note || '') : ''
+}
+
 export default function Settings({ cfg, patchCfg }) {
   const [f, setF] = useState({
     capture_mode: cfg.capture_mode, cable_output_device: cfg.cable_output_device,
@@ -10,12 +45,15 @@ export default function Settings({ cfg, patchCfg }) {
     asr_preset: cfg.asr_preset, asr_key: cfg.asr_keys[cfg.asr_preset] || '',
     mt_preset: cfg.mt_preset, mt_key: cfg.mt_keys[cfg.mt_preset] || '',
     tts_voice: cfg.tts_voice, tts_rate: cfg.tts_rate, tts_pitch: cfg.tts_pitch,
+    tts_preset: cfg.tts_preset || 'local', tts_key: (cfg.tts_keys || {})[cfg.tts_preset || 'local'] || '',
     hotkey_lock: cfg.hotkey_lock, hotkey_review: cfg.hotkey_review,
     hotkey_ptt: cfg.hotkey_ptt, hotkey_move: cfg.hotkey_move || '<ctrl>+<shift>+d',
+    hotkey_select: cfg.hotkey_select || '<ctrl>+<alt>+t',
+    select_target: cfg.select_target || 'auto',
     auto_copy: cfg.auto_copy, asr_mode: cfg.asr_mode,
   })
   const [devices, setDevices] = useState({ capture: [], mics: [] })
-  const [presets, setPresets] = useState({ asr: {}, mt: {} })
+  const [presets, setPresets] = useState({ asr: {}, mt: {}, tts: {} })
   const [voices, setVoices] = useState([])
   const [asrHint, setAsrHint] = useState('提示：SenseVoice 支持中/英/日/韩/粤；葡语等请切换 Groq/OpenAI 预设。')
   const [mtHint, setMtHint] = useState('')
@@ -62,8 +100,10 @@ export default function Settings({ cfg, patchCfg }) {
       asr_preset: f.asr_preset, asr_key: f.asr_key,
       mt_preset: f.mt_preset, mt_key: f.mt_key,
       tts_voice: f.tts_voice, tts_rate: +f.tts_rate, tts_pitch: +f.tts_pitch,
+      tts_preset: f.tts_preset, tts_key: f.tts_key,
       hotkey_lock: f.hotkey_lock, hotkey_review: f.hotkey_review,
       hotkey_ptt: f.hotkey_ptt, hotkey_move: f.hotkey_move,
+      hotkey_select: f.hotkey_select, select_target: f.select_target,
       auto_copy: f.auto_copy, asr_mode: f.asr_mode,
     })
     setSaved(true); setTimeout(() => setSaved(false), 2500)
@@ -284,13 +324,15 @@ export default function Settings({ cfg, patchCfg }) {
           <select style={{ maxWidth: 300 }} value={f.asr_preset}
                   onChange={e => set('asr_preset', e.target.value)}>
             {Object.entries(presets.asr).map(([k, p]) => (
-        <option key={k} value={k}>
-          {typeof p === 'string' ? p
-            : `${p.label}${p.price ? '  ·  ' + p.price : ''}`}
-        </option>
-      ))}
+              <option key={k} value={k}>{presetOptionText(p)}</option>
+            ))}
           </select>
-          <input className="grow" type="text" placeholder="粘贴 API Key" value={f.asr_key}
+          {/* ★ v0.3.1：Key 输入框改 password（外部审计 Step-5 P2-6 / MiMo 6.3）
+              原来是 type="text" —— Key 在屏幕上明文可见，
+              截屏 / 分享屏幕 / 旁边有人一眼就看全。
+              autoComplete="off" 顺带阻止浏览器把它存进密码管理器。 */}
+          <input className="grow" type="password" autoComplete="off" spellCheck={false}
+                 placeholder="粘贴 API Key" value={f.asr_key}
                  onChange={e => set('asr_key', e.target.value)} />
           <button className="btn" style={{ flexShrink: 0 }} onClick={() => call('test_asr', f.asr_key)}>测试</button>
         </div>
@@ -298,22 +340,59 @@ export default function Settings({ cfg, patchCfg }) {
           <label>翻译</label>
           <select style={{ maxWidth: 300 }} value={f.mt_preset} onChange={e => set('mt_preset', e.target.value)}>
             {Object.entries(presets.mt).map(([k, p]) => (
-        <option key={k} value={k}>
-          {typeof p === 'string' ? p
-            : `${p.label}${p.price ? '  ·  ' + p.price : ''}`}
-        </option>
-      ))}
+              <option key={k} value={k}>{presetOptionText(p)}</option>
+            ))}
           </select>
-          <input className="grow" type="text" placeholder="粘贴 API Key" value={f.mt_key}
+          <input className="grow" type="password" autoComplete="off" spellCheck={false}
+                 placeholder="粘贴 API Key" value={f.mt_key}
                  onChange={e => set('mt_key', e.target.value)} />
           <button className="btn" style={{ flexShrink: 0 }} onClick={() => call('test_mt', f.mt_key)}>测试</button>
         </div>
+        {/* ★ v0.3.1：note 也给 ASR / 翻译两档显示出来（朗读那栏 v0.3.0 起就有）。
+            这一条不是装饰 —— Groq 便宜到近乎免费，但国内网络实测 403 被挡，
+            不把这句话摆在下拉正下方，用户选完才发现用不了。 */}
+        {presetNote(presets.asr, f.asr_preset) && (
+          <div className="muted">{presetNote(presets.asr, f.asr_preset)}</div>
+        )}
+        {presetNote(presets.mt, f.mt_preset) && (
+          <div className="muted">{presetNote(presets.mt, f.mt_preset)}</div>
+        )}
         <div className="muted">{asrHint}</div>
         {mtHint && <div className="muted">{mtHint}</div>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 className="h2" style={{ marginBottom: 14 }}>译文朗读音色（本地播放，队友听不到）</h2>
+        {/* ── v0.3.0：云端 TTS 服务商 ──
+            默认「本地音色」是**刻意**的：云端每次 PTT 要多一次网络往返
+            （实测 1389~2503 ms），而本地 edge 链几乎无延迟。
+            所以云端只做可选档，不动默认。
+            `local` 档不显示 Key 输入框 —— 它本来就不需要 Key，
+            显示一个永远填不上的输入框只会让人困惑。 */}
+        <div className="form-row">
+          <label>朗读引擎</label>
+          <select style={{ maxWidth: 320 }} value={f.tts_preset}
+                  onChange={e => set('tts_preset', e.target.value)}>
+            {Object.entries(presets.tts || {}).map(([k, p]) => (
+              <option key={k} value={k}>{presetOptionText(p)}</option>
+            ))}
+          </select>
+          {f.tts_preset !== 'local' && (
+            <>
+              <input className="grow" type="password" autoComplete="off" spellCheck={false}
+                     placeholder="粘贴 API Key"
+                     value={f.tts_key} onChange={e => set('tts_key', e.target.value)} />
+            </>
+          )}
+          <button className="btn" style={{ flexShrink: 0 }}
+                  onClick={() => call('preview_tts')}>🔊 试听</button>
+        </div>
+        {presets.tts?.[f.tts_preset]?.note && (
+          <div className="muted" style={{ marginTop: -4, marginBottom: 10 }}>
+            {presets.tts[f.tts_preset].note}
+            {f.tts_preset !== 'local' && '　云端引擎没有语速参数，下面的语速滑杆对它不生效。'}
+          </div>
+        )}
         <div className="form-row">
           <label>音色</label>
           <select className="grow" value={f.tts_voice} onChange={e => set('tts_voice', e.target.value)}>
@@ -337,26 +416,37 @@ export default function Settings({ cfg, patchCfg }) {
 
       <div className="card">
         <h2 className="h2" style={{ marginBottom: 14 }}>热键（点击后直接按组合键，不用手打）</h2>
-        <HotkeyInput label="锁定穿透" value={f.hotkey_lock} hint="锁定后鼠标穿透浮窗，不挡游戏操作"
-                      siblings={[{ label: '回看字幕', value: f.hotkey_review },
-                                { label: '固定/拖动', value: f.hotkey_move },
-                                { label: '按住说话', value: f.hotkey_ptt }]}
-                      onChange={v => set('hotkey_lock', v)} />
-        <HotkeyInput label="回看字幕" value={f.hotkey_review} hint="随时把字幕面板叫回屏幕"
-                      siblings={[{ label: '锁定穿透', value: f.hotkey_lock },
-                                { label: '固定/拖动', value: f.hotkey_move },
-                                { label: '按住说话', value: f.hotkey_ptt }]}
-                      onChange={v => set('hotkey_review', v)} />
-        <HotkeyInput label="固定/拖动" value={f.hotkey_move} hint="游戏中一键切换：固定（穿透）↔ 可拖动"
-                      siblings={[{ label: '锁定穿透', value: f.hotkey_lock },
-                                { label: '回看字幕', value: f.hotkey_review },
-                                { label: '按住说话', value: f.hotkey_ptt }]}
-                      onChange={v => set('hotkey_move', v)} />
-        <HotkeyInput label="按住说话" value={f.hotkey_ptt} allowSingle hint="可设单键（如 V）或组合键，按住不放说话，松开即翻译并复制"
-                      siblings={[{ label: '锁定穿透', value: f.hotkey_lock },
-                                { label: '回看字幕', value: f.hotkey_review },
-                                { label: '固定/拖动', value: f.hotkey_move }]}
-                      onChange={v => set('hotkey_ptt', v)} />
+        {/* ★ v0.3.0 改成数据驱动。
+            原来是 4 个 <HotkeyInput> 各写一遍 siblings，而且每一遍都要
+            手动列出其余三个 —— 加第 5 个热键（划词翻译）时必然有遗漏，
+            而遗漏的表现是「某个热键旁边没显示另外几个的当前值」，
+            只影响观感、不报错，很难被发现。
+            「同一个键散在多处」是本项目反复吃亏的模式（local_rules
+            七张表同键不同值、plan_voice 与 resolve_voice 同名），
+            这里一次性收掉：键的清单只写一份。 */}
+        {HK_ROWS.map(row => (
+          <HotkeyInput key={row.field}
+                        label={row.label}
+                        value={f[row.field] || row.fallback}
+                        hint={row.hint}
+                        allowSingle={!!row.allowSingle}
+                        siblings={HK_ROWS.filter(x => x.field !== row.field)
+                          .map(x => ({ label: x.label, value: f[x.field] || x.fallback }))}
+                        onChange={v => set(row.field, v)} />
+        ))}
+
+        <div className="form-row">
+          <label style={{ width: 96 }}>划词翻译方向</label>
+          <select className="input grow" value={f.select_target || 'auto'}
+                  onChange={e => set('select_target', e.target.value)}>
+            <option value="auto">自动（已是中文→英文，否则→中文）</option>
+            <option value="zh">总是翻成中文</option>
+            <option value="en">总是翻成英文</option>
+          </select>
+        </div>
+        <div className="muted" style={{ marginTop: -6, marginBottom: 10 }}>
+          在任何程序里选中一段文字，按上面的「划词翻译」键，译文会自动复制到剪贴板。
+        </div>
 
         <div className="form-row">
           <label style={{ width: 96 }}>字幕面板</label>

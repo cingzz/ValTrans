@@ -39,10 +39,21 @@ log = logging.getLogger("valtrans.pipeline")
 
 @dataclass
 class SubtitleEvent:
-    """一条完整字幕（识别+翻译完成）。"""
+    """一条完整字幕（识别+翻译完成）。
+
+    latency_ms 的口径（v0.3.0 修正过一次，别再改回去）
+    ------------------------------------------------
+    现在量的是「**说话人真正闭嘴** -> 翻译完成」，含静音确认税。
+    原来量的是「VAD 判定这句话说完了 -> 翻译完成」，比用户感受少
+    416ms（silence_ms=300 量化成 320ms + silero 比 RMS 晚 3 块的 96ms，
+    实测 n=12 段全等，见 tests/bench_e2e_latency.py）。
+
+    差别不是学术问题：拿旧口径去做「换不换服务商」「加不加草稿」
+    这种取舍，等于每次少算 416ms，而这段是每次发言都要付的。
+    """
     original: str
     translated: str
-    latency_ms: int          # 语音结束 -> 翻译完成
+    latency_ms: int          # 说话人闭嘴 -> 翻译完成（含静音确认税）
     asr_ms: int = 0
     mt_ms: int = 0
     fallback: bool = False    # 翻译是否走了降级
@@ -237,13 +248,25 @@ class Pipeline:
             log.exception("segmenter push failed")
 
     def _enqueue(self, seg: np.ndarray) -> None:
+        # ★ v0.3.0 延迟口径修正：t_end 原来取 time.time()，那是
+        #   **VAD 攒够静音、判定这句话说完了**的时刻。用户感受的却是
+        #   「我闭嘴了，字幕怎么还没出来」——两者之间隔着静音确认税。
+        #   实测（tests/bench_e2e_latency.py，n=12，12 段全等）这段是
+        #   **416ms**：silence_ms=300 量化后是 320ms，silero 判「还在说话」
+        #   又比 RMS 判「已安静」晚 3 块（96ms），加起来 416。
+        #   它此前不在任何延迟数字里，却每次都加在用户身上。
+        #
+        #   扣多少必须问断句器（last_trailing_silence_s）：被静音关掉的段
+        #   尾巴有这段静音，被 max_segment_s 硬切的段尾巴没有，扣错会
+        #   反过来把延迟报小。外面只拿得到一个 numpy 数组，分不出来。
+        tax = float(getattr(self._segmenter, "last_trailing_silence_s", 0.0) or 0.0)
         self._last_final_ts = time.time()   # 草稿作废线：最终稿已在路上
         try:
-            self._seg_q.put_nowait((time.time(), seg))
+            self._seg_q.put_nowait((time.time() - tax, seg))
         except queue.Full:
             try:
                 self._seg_q.get_nowait()   # 丢最旧
-                self._seg_q.put_nowait((time.time(), seg))
+                self._seg_q.put_nowait((time.time() - tax, seg))
             except Exception:
                 pass
             # ★ v0.2.16：丢段必须留痕——用户视角「说了没字幕」此前无线索

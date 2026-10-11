@@ -38,11 +38,12 @@ a = Analysis(
         (os.path.join(ROOT, "webui", "dist"), "webui_dist"),
     ],
     hiddenimports=[
-        "src", "src.app", "src.core.config", "src.core.security",
+        # v0.3.0：原列表里有 "src.app" 和 5 个 "src.ui.*" —— Qt 兜底界面已删，
+        # 它们正是 PySide6 占满包体的通道（91.6MB / 44.5%）。必须同步删，
+        # 否则下次打包直接报模块找不到。
+        "src", "src.core.config", "src.core.security",
         "src.core.audio_capture", "src.core.segmenter", "src.core.pipeline",
         "src.services.engine", "src.services.tts", "src.services.reverse_ptt",
-        "src.ui.theme", "src.ui.shell", "src.ui.pages", "src.ui.overlay",
-        "src.ui.wizard",
         "src.uiweb", "src.uiweb.host", "src.uiweb.api",
         # ★ v0.2.22：上报反馈。api.py 里是函数内延迟 import，
         #   显式列出来双保险 —— 少一个 hiddenimport 就整块功能静默消失，
@@ -58,7 +59,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "torch", "torchvision", "torchaudio", "matplotlib", "scipy",
-        "tkinter", "pandas", "IPython", "jedi", "PyQt5",
+        "tkinter", "pandas", "IPython", "jedi",
+        # v0.3.0：Qt 系列显式拉黑（PyQt5 一并归入）。hiddenimports 去掉
+        # 只是「不再主动拉」，这里写死才是「谁也别想悄悄带回来」——
+        # 谁要是转头 import PySide6，打包当场报错，而不是默默多出 90MB。
+        "PySide6", "shiboken6", "PyQt6", "PyQt5",
     ],
     noarchive=False,
 )

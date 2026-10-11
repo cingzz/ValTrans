@@ -48,7 +48,21 @@ def _dist_file(name: str) -> str:
 def _url(name: str) -> str:
     # 传本地路径字符串（非 file:// URI），pywebview 才会以内置 HTTP 服务器加载，
     # 否则 ES module 在 file:// 下被 CORS 拦截导致白屏
-    return _dist_file(name)
+    u = _dist_file(name)
+    # ★ v0.3.0：仅测试模式追加 query，用来指定初始页/初始打开的弹窗。
+    #   「验新增页面渲染对不对」靠坐标点击去切页签不可靠 —— 布局一动坐标就失效，
+    #   而失效的表现是「截到首页却报成通过」，比没有测试更糟。
+    #   VALTRANS_TEST=1 时才拼；生产启动不带这个变量，URL 与从前完全一致。
+    if os.environ.get("VALTRANS_TEST") == "1":
+        page = os.environ.get("VALTRANS_TEST_PAGE", "")
+        if page:
+            u += ("&" if "?" in u else "?") + "__vt_page=" + page
+        if os.environ.get("VALTRANS_TEST_MEETING") == "1":
+            u += ("&" if "?" in u else "?") + "__vt_meeting=1"
+        scroll = os.environ.get("VALTRANS_TEST_SCROLL", "")
+        if scroll.isdigit():
+            u += ("&" if "?" in u else "?") + "__vt_scroll=" + scroll
+    return u
 
 
 def _set_mouse_passthrough(hwnd: int, passthrough: bool) -> None:

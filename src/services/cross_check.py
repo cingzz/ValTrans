@@ -76,12 +76,46 @@ def _english_index() -> dict[str, str]:
                 continue
             idx.setdefault(en, zh)
     # 英雄/武器官方译名（agents.py 是唯一来源，本身已联网核实）
+    #
+    # ★ v0.3.1：这里原先漏了类型检查，是个**吞掉的崩溃**（外部审计后修）
+    # ------------------------------------------------------------------
+    # AGENTS / WEAPONS 的值**不是译名字符串**，而是结构化 dict：
+    #     AGENTS["jett"] = {"cn": "捷风", "role": "决斗", "nick": ["jet", ...]}
+    #     WEAPONS["vandal"] = {"cn": "狂徒", "cls": "步枪", "nick": [...]}
+    # 29 个英雄 + 19 把武器 = **48 条全部是 dict**，一条 str 都没有。
+    #
+    # 上面 `_english_index` 对 local_rules 的表是有 `isinstance(zh, str)`
+    # 过滤的（见 L65），唯独这段漏了 —— 只检查了键 k，没检查值 v。
+    # 后果有两个，都很隐蔽：
+    #
+    #   ① `build_hint()` 里 `f"{en}={zh}"`，于是发给云端的术语提示词变成
+    #        「jett={'cn': '捷风', 'role': '决斗', 'nick': ['jet', ...]}」
+    #      提示词被污染，而请求照样成功 —— 只是术语对照基本失效。
+    #
+    #   ② `audit_missed_terms()` 里 `zh.rstrip("，。！？、 ")` 直接
+    #      AttributeError。**只要句子里出现任意一个英雄名或武器名就炸**。
+    #      而它在 engine.py 里被 `try/except: pass` 包着 —— 崩溃被吞，
+    #      日志里连痕迹都没有。也就是说：这 48 个词，术语记账从来没工作过。
+    #
+    # 「有 try/except」不等于「有兜底」：吞掉异常只是让它**不再可见**，
+    # 不是让它**不再发生**。这是本项目「有≠对」的又一个实例。
+    #
+    # 只取 cn（官方中文名），**不展开 nick 别名** —— 那是另一个决定：
+    # nick 里有 "op"（operator）、"nn"（neon）这种短缩写，
+    # 建成英文索引后，任何含 "op"/"nn" 的英文句都会被判成术语命中，
+    # 提示词和记账都会误报。要加别名得单独过一道假阳性评估。
     try:
         from .agents import AGENTS, WEAPONS
         for k, v in list(AGENTS.items()) + list(WEAPONS.items()):
             k = (k or "").strip().lower()
-            if k and len(k) >= 2 and " " not in k:
-                idx.setdefault(k, v)
+            if not (k and len(k) >= 2 and " " not in k):
+                continue
+            if isinstance(v, dict):
+                cn = (v.get("cn") or "").strip()
+                if cn:
+                    idx.setdefault(k, cn)
+            elif isinstance(v, str) and v.strip():
+                idx.setdefault(k, v.strip())
     except Exception:
         pass
     return idx
@@ -267,32 +301,46 @@ def build_hint(src: str, limit: int = 12) -> str:
         "；".join(f"{en}={zh}" for en, zh in hits)
 
 
-def enforce(src: str, out: str, limit: int = 12) -> tuple[str, list[str]]:
-    """后置校对：云端没用我们的译法时，强制改回来。
+def audit_missed_terms(src: str, out: str, limit: int = 12) -> tuple[str, list[str]]:
+    """后置校对：**记账**云端没采用我们的哪些译法。返回 ``(译文, 漏译术语清单)``。
 
-    返回 ``(修正后译文, 被修正的术语列表)``。
+    ★ 这个函数原来叫 `enforce`，v0.3.1 改名（外部审计指出名实不符）。
+    ------------------------------------------------------------------
+    旧名和旧文档说的是「强制改回来」「返回 (修正后译文, ...)」，
+    但函数体**从来没有改过 `out`** —— `fixed` 这个变量赋了值却从没用过，
+    最后两处 `return` 返回的都是原封不动的 `out`。
 
-    只修「**完全没出现**期望译法」的情况；
-    模型翻对了但措辞不同（近义）的一律不动 —— 那是文风差异不是错误，
+    名字说「强制」、实现是「记账」，差别很大：
+        · 名字会骗人：调用方读到 `enforce` 就以为译文已经被修正过，
+          于是不再做兜底 —— 而实际上漏译原样流到用户眼前。
+        · 更糟的是它**看起来像 bug**：将来有人「修」它，
+          真去改写译文，就会造出病句（改写要动语序，见下）。
+      也就是说，一个撒谎的名字会同时诱导两种相反的错误操作。
+      留着比删掉更危险，所以改成 `audit_missed_terms`（审计漏译术语）——
+      这个名字本身就是「我只报数、不动手」。
+
+    ★ 为什么不改写译文（这是**设计**，不是没写完）
+    ----------------------------------------------
+    只统计「**完全没出现**期望译法」的情况；
+    模型翻对了但措辞不同（近义）的一律不算 —— 那是文风差异不是错误，
     强改反而会写出不通顺的句子（需求背景：「一定要通顺一点」）。
+
+    而且就算判定真漏了，也不直接往译文里插：
+    译文的语序是云端给的，本地不知道该插在哪个位置，
+    机械替换只会造出病句。所以这里**只返回清单**，由上层决定怎么用。
     """
     hits = find_terms(src)[:limit]
     if not hits or not out:
         return out, []
-    fixed, changed = out, []
+    changed = []
     for en, zh in hits:
-        # 模型已经用了正确译法（或它的合理变体）-> 不动
+        # 模型已经用了正确译法（或它的合理变体）-> 不算漏
         core = zh.rstrip("，。！？、 ")
         if not core:
             continue
         # 逐字包含太严：中文常有「拉枪线」vs「拉线」的差异
-        if core in fixed or zh in fixed:
+        if core in out or zh in out:
             continue
-        # 只在「原句里这个词确实没被译出」时改，且译文里也没有近似中文
+        # 译文里确实找不到这个术语的中文 -> 记一笔
         changed.append(f"{en}->{zh}")
-    if not changed:
-        return out, []
-    # 保守策略：**不直接改译文**（不知道该插在哪个位置，乱插更糟），
-    # 而是返回清单让上层决定。这里选择：把缺失术语追加在末尾并标注。
-    # 之所以不静默改写：译文语序不可知，机械替换会造出病句。
     return out, changed

@@ -5,10 +5,38 @@
 """网络安全模块：统一 HTTP 出口校验。
 
 规则（项目安全约束）：
-- 仅允许 http/https；
+- **仅允许 https**（v0.3.1 起收紧，此前 http/https 都放行）；
 - 发请求前校验 host，拒绝 localhost、环回、私有与保留地址。
 所有云端请求必须经 `safe_client()` 创建的客户端发出。
-"""
+
+★ v0.3.1：为什么把 http 拿掉（外部审计 MiMo 7.1，八家里只有它报了这条）
+------------------------------------------------------------------------
+这条链路上跑的每一个请求都带：
+
+    Authorization: Bearer <用户的 API Key>
+
+而 http 是**明文**传输。在咖啡厅 / 宿舍 / 网吧 / 任何共享 Wi-Fi 上，
+同一网段的人用抓包工具就能直接看到 Key 本体。拿到 Key 就能拿走额度 ——
+腾讯 TokenHub 与阿里百炼都是按量计费。
+
+之前放行 http 的理由大概率是「万一有人要接自建服务」，
+但代价是**所有人的 Key 都能被同网段嗅探**，收益只是极少数人的方便。
+需要自建 http 服务的用户完全可以自己加一行，不该让默认路径替所有人冒险。
+
+★ 残留风险要如实说清：DNS TOCTOU 没有根治
+------------------------------------------
+`validate_url` 解析 DNS 校验 IP，随后 httpx 发请求时**会再解析一次**。
+攻击者若控制 DNS，可以让第一次返回公网 IP（通过校验）、
+第二次返回内网 IP，从而绕过 SSRF 防护。
+
+这里**没有**用「缓存 DNS 结果」来「修」它，因为那恰恰会把问题变严重：
+窗口从毫秒级被拉长到整个 TTL 期间。**为了看起来更安全而引入更大的洞，
+比不修更糟**。
+
+真要根治需要把连接绑到已校验的 IP（保留原始 Host/SNI），
+属于一次不小的改造，收益与本项目的威胁模型（个人桌面工具、
+不是多租户服务端）不匹配，因此记在这里当作**已知未修**，
+而不是假装它不存在。"""
 from __future__ import annotations
 
 import ipaddress
@@ -19,7 +47,8 @@ import threading
 
 import httpx
 
-_ALLOWED_SCHEMES = {"http", "https"}
+# ★ 只有 https。http 不是「不太安全」，是**把 Key 明文广播出去**。
+_ALLOWED_SCHEMES = {"https"}
 
 
 class DisallowedURLError(ValueError):
@@ -32,7 +61,10 @@ def validate_url(url: str) -> str:
         raise DisallowedURLError("URL 为空")
     parsed = urlparse(url.strip())
     if parsed.scheme not in _ALLOWED_SCHEMES:
-        raise DisallowedURLError(f"仅允许 http/https，收到: {parsed.scheme!r}")
+        raise DisallowedURLError(
+            "仅允许 https（http 会把 API Key 明文发出去），收到: %r。"
+            "如果你要接自建 http 服务，请先给它套一层 https 或反代。"
+            % (parsed.scheme,))
     host = parsed.hostname
     if not host:
         raise DisallowedURLError("URL 缺少主机名")
